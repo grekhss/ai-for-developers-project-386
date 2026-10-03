@@ -1,0 +1,70 @@
+import { describe, it, expect } from 'vitest';
+import { createInMemoryBookingsApi } from './inMemory.ts';
+import type { Booking } from './types.ts';
+
+const seed: Booking[] = [
+  { id: '1', date: '2026-10-06', time: '10:00' },
+  { id: '2', date: '2026-10-05', time: '09:00' },
+  { id: '3', date: '2026-11-01', time: '12:00' },
+];
+
+describe('createInMemoryBookingsApi', () => {
+  it('отдаёт записи полуинтервала с включёнными границами', async () => {
+    const api = createInMemoryBookingsApi(seed);
+
+    const bookings = await api.list({ from: '2026-10-05', to: '2026-10-06' });
+
+    expect(bookings.map((booking) => booking.date)).toEqual(['2026-10-05', '2026-10-06']);
+  });
+
+  it('упорядочивает записи по дате и времени', async () => {
+    const api = createInMemoryBookingsApi([
+      { id: '1', date: '2026-10-06', time: '09:00' },
+      { id: '2', date: '2026-10-06', time: '10:00' },
+      { id: '3', date: '2026-10-05', time: '18:00' },
+    ]);
+
+    const bookings = await api.list({ from: '2026-10-01', to: '2026-10-31' });
+
+    expect(bookings.map((booking) => `${booking.date} ${booking.time}`)).toEqual([
+      '2026-10-05 18:00',
+      '2026-10-06 09:00',
+      '2026-10-06 10:00',
+    ]);
+  });
+
+  it('не отдаёт записи за пределами полуинтервала', async () => {
+    const api = createInMemoryBookingsApi(seed);
+
+    expect(await api.list({ from: '2026-12-01', to: '2026-12-31' })).toEqual([]);
+  });
+
+  it('присваивает создаваемым записям идентификатор и сохраняет их', async () => {
+    const api = createInMemoryBookingsApi();
+
+    const created = await api.create({ date: '2026-10-07', time: '15:30' });
+
+    expect(created.id).toBeTruthy();
+    expect(await api.list({ from: '2026-10-01', to: '2026-10-31' })).toEqual([created]);
+  });
+
+  it('не делит хранилище между вызовами фабрики', async () => {
+    const first = createInMemoryBookingsApi(seed);
+    const second = createInMemoryBookingsApi(seed);
+    const range = { from: '2026-10-01', to: '2026-10-31' };
+
+    await first.create({ date: '2026-10-07', time: '15:30' });
+
+    expect(await first.list(range)).toHaveLength(3);
+    expect(await second.list(range)).toHaveLength(2);
+  });
+
+  it('не меняет переданные при создании записи', async () => {
+    const source: Booking[] = [];
+    const api = createInMemoryBookingsApi(source);
+
+    await api.create({ date: '2026-10-07', time: '15:30' });
+
+    expect(source).toEqual([]);
+  });
+});
