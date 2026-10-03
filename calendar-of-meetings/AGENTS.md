@@ -53,7 +53,10 @@ npm 10 locally.
 - `react/react-in-jsx-scope` is **off** because the project uses
   `jsx: "react-jsx"` — the rule would demand `React` in scope and flag every
   JSX element as a false positive.
-- `npm run lint` prints nothing on success.
+- `npm run lint` exits 0 with `react-perf(jsx-no-new-*-as-prop)` warnings
+  printed inline — `perf` is `warn` and `--deny-warnings` isn't used, so those
+  are noise, not failures. Inline lambdas passed as props are idiomatic here;
+  hoist a handler to a module constant only when it's a pure predicate.
 
 ## Testing (vitest + Testing Library)
 
@@ -97,6 +100,30 @@ npm 10 locally.
   days, so `getByText('1')` is ambiguous. `data-today` is unique and is the
   stable click target. Each day also gets a localized default
   `aria-label` ("3 октября 2026") computed in `Month.mjs`.
+- **Mantine v9 throws without `MantineProvider` in the tree** ("MantineProvider
+  was not found in component tree") — every render test must wrap the component
+  it renders. `DatesProvider` is only needed for date widgets that read locale
+  or weekend days from context; a `Modal` with a `TimeGrid` does not need it.
+- `TimeGrid` slots are `<button>`s whose text is the formatted time, so
+  `getByRole('button', { name: '09:00' })` works. Taken slots are `disabled`
+  **and** carry `data-disabled`; the active slot gets Mantine's `active`
+  class, not a `data-` attribute.
+- **Calendar CSS classes are `mantine-DatePicker-*`, not `mantine-Calendar-*`.**
+  Verified ones: `-weekday` (7 cells, lowercase 2-letter Russian: `пн`…`вс`),
+  `-weekdaysRow`, `-calendarHeaderLevel` (button with "октябрь 2026"),
+  `-day`, `-monthTbody`. Don't guess `.mantine-Calendar-header` — it doesn't
+  exist in v9 and the failure mode is a confusing
+  "undefined and string is invalid for this assertion" instead of a null check.
+- **Assert the locale from day `aria-label`s, not from the header text.**
+  The header shows the *current* month, so a test asserting "октября" passes in
+  October and fails in November. `/^\d{1,2} [а-яё]+ \d{4}$/` proves Russian
+  locale in any month.
+- **`App` takes an optional `api` prop, and it is load-bearing in tests.**
+  `lib/bookings/api.ts` exports a module-level singleton, so without a per-test
+  `createInMemoryBookingsApi()` the bookings leak between test cases in the same
+  file and a slot booked by an earlier test is `disabled` in a later one — the
+  click silently does nothing and the test times out on a `findBy`. Pass
+  `api={createInMemoryBookingsApi()}` from every render test.
 
 ## Mantine v9 dates — check this before writing date code
 
@@ -144,9 +171,30 @@ Overflow answers, and your own priors. Verified against
   Delete unused code rather than prefixing names with `_` to silence it.
 - `erasableSyntaxOnly` is on: no TS-only runtime constructs (enums, parameter
   properties, namespaces).
-- **`strict` is *not* enabled** in `tsconfig.app.json` (unlike the stock Vite
-  template). Don't assume strict-null checking, and don't turn `strict` on
-  unprompted.
+- **`react/set-state-in-effect` is an error, and it is transitive:** calling a
+  function that touches `setState` from an effect body is flagged *even if the
+  `setState` happens after an `await`*. So a "load on mount" effect can't call
+  the hook's own `refresh` — see the inlined `load` in `useBookings.ts` for the
+  accepted shape. Don't "simplify" it back into `void refresh()`.
+- **`strict` is on** in `tsconfig.app.json` (enabled 2026-10-03, so don't assume
+  the stock Vite template's laxer defaults). Nullable date/time state — the bulk
+  of this app — is checked, so expect `string | null` to be narrowed explicitly
+  rather than passed through. `skipLibCheck` is also on, so strict never surfaces
+  errors from Mantine's own `.d.ts`.
+- `DatePicker`'s `onChange` is typed `(value: DateStringValue | null) => void`
+  even with `type="default"` — `allowDeselect` can emit `null`, so a handler
+  can't be typed `(date: string) => void`. Narrow inside the wrapper component
+  that owns the `DatePicker`.
+- **`getDayProps` overrides the props `DatePicker` computes itself.** In
+  `DatePicker.mjs` the day props are built as `...getControlProps(date)` *then*
+  `...calendarProps.getDayProps?.(date)`, so a hand-passed `selected` replaces
+  the real selection — always OR it with the current value. Symmetrically, in
+  `Month.mjs` `disabled` is computed from `excludeDate` / `minDate` / `maxDate`
+  *before* `...dayProps` is spread, so a `disabled` from `getDayProps` would
+  silently defeat `excludeDate`. Don't pass one.
+- Day cells expose `data-selected` / `data-today` / `data-disabled`, but
+  `data-outside` and `data-weekend` are only set on **enabled** days
+  (`!disabled && outside`), so a disabled weekend has neither attribute.
 - `tsconfig.app.json` sets `types: ["vite/client"]`, which replaces the usual
   `src/vite-env.d.ts`. Don't create that file.
 - `moduleResolution: "bundler"` with `allowImportingTsExtensions` — relative
@@ -178,10 +226,65 @@ calendar-of-meetings/
 ├── public/favicon.svg      # served at /
 └── src/
     ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
-    ├── App.tsx             # all current UI
+    ├── App.tsx             # page-level state and layout; renders components/
     ├── App.test.tsx        # colocated vitest tests
+    ├── components/         # rendering only; props in, no domain rules
+    │   ├── BookingModal.tsx   # slot picker in a Modal; controlled time prop
+    │   ├── BookingModal.test.tsx
+    │   └── MeetingCalendar.tsx  # the ONLY file importing @mantine/dates
+    ├── hooks/              # React state around lib; the only place with useState
+    │   ├── useBookings.ts  # load/create bookings; takes a BookingsApi so tests inject a fake
+    │   └── useBookings.test.ts
+    ├── lib/                # framework-free domain code, unit-tested beside itself
+    │   ├── date.ts         # APP_LOCALE, today, isWeekend, isPast, isBookable, formatDateRu
+    │   ├── date.test.ts
+    │   ├── slots.ts        # generateTimeSlots — workday bounds and slot length
+    │   ├── slots.test.ts
+    │   └── bookings/
+    │       ├── types.ts    # Booking, BookingDraft, DateRange
+    │       ├── api.ts      # BookingsApi interface + the instance the app uses
+    │       ├── inMemory.ts # the current implementation, a factory so state isn't shared
+    │       └── inMemory.test.ts
     └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup
 ```
+
+**Three layers:** `lib/` holds pure functions and types with no React and no
+Mantine imports; `components/` renders; `hooks/` is the only place that owns
+React state and the only bridge between `components/` and `lib/bookings/api.ts`.
+Domain rules and date formatting live in `lib/` and are duplicated nowhere — if
+a second component needs "is this a bookable day?" or "how do we spell a date in
+Russian?", it imports from `lib/`, it does not re-derive it. Keep
+`@mantine/dates` confined to `components/` that actually render dates, so the
+rest of the app passes plain `'YYYY-MM-DD'` strings around.
+
+**`App` owns only UI state; `lib` state is never mirrored.** It holds
+`selectedDate`, `time`, and `lastBooked` (a `BookingDraft` kept only to render
+the «Запись: …» line — `Booking` carries no creation timestamp, so "the newest
+one" isn't derivable from the sorted array). Resetting on date change happens in
+the click handler, not in an effect:
+
+```tsx
+onSelect={(date) => { setTime(null); setSelectedDate(date); }}
+```
+
+`BookingModal` is deliberately always mounted (so Mantine keeps its close
+animation) and takes `date: string | null` where `null` means closed — no `key`
+remount, no local `useState` for the slot. `takenTimes` comes from the bookings
+for that date, which is what makes a booked slot unselectable on reopen.
+
+**Data access goes through `BookingsApi`** (`lib/bookings/api.ts`), never
+straight to a concrete implementation. `api.ts` holds the interface *and* the
+instance the app uses, so switching to HTTP is a one-line change there;
+components and hooks only see the interface. Hooks take the API as a parameter
+with that instance as the default, which is how tests inject a fake without
+`vi.mock`.
+
+**Tests must not assume "today is selectable."** Past days and weekends are
+disabled by `isBookable`, so `[data-today]` is unclickable whenever today falls
+on a weekend (and it was, on 2026-10-03). Select "the first enabled day of the
+displayed month" (`tbody button:not([disabled])` without `data-outside`) instead,
+and page to the next month via `[data-direction="next"]` when the current one has
+none left. Assert on `disabled` for rule checks rather than on dates.
 
 `src/App.css`, `src/index.css`, `src/assets/`, and `public/icons.svg` were dead
 Vite-starter leftovers and have since been deleted — don't reintroduce them, and
