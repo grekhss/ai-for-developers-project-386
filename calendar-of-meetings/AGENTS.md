@@ -16,19 +16,21 @@ npm 10 locally.
 | Lint | `npm run lint` |
 | Lint + autofix safe fixes | `npm run lint:fix` |
 | Lint language server (for editors) | `npm run lint:lsp` |
-| Lint + typecheck, no bundling | `npm run check` |
+| Tests (single run) | `npm test` |
+| Tests (watch mode) | `npm run test:watch` |
+| Full gate: lint + typecheck + tests | `npm run check` |
 | Serve the built output | `npm run preview` |
 
 - **There is no `typecheck` script.** `npm run build` runs `tsc -b` first, and
-  `npm run check` runs lint + `tsc -b` without bundling — those are the two type
-  gates. Note that `npm run dev` gives HMR but **no type feedback**: Vite strips
-  types without checking them, so run `check` (or
+  `npm run check` runs lint + `tsc -b` + vitest without bundling — those are the
+  two type gates. Note that `npm run dev` gives HMR but **no type feedback**:
+  Vite strips types without checking them, so run `check` (or
   `npx tsc --noEmit -p tsconfig.app.json --watch` in a second terminal) while
   developing.
-- **There is no test framework and no test script.** Do not add one unprompted.
-  The real suite is external and runs on every push via
-  `.github/workflows/hexlet-check.yml` at the repo root; that file must not be
-  edited, renamed, or deleted.
+- Hexlet's own suite is separate and external: it runs on every push via
+  `.github/workflows/hexlet-check.yml` at the repo root, which must not be
+  edited, renamed, or deleted. It does **not** run lint, typecheck, or the local
+  tests — nothing in CI does, so `npm run check` is manual.
 - There is **no `README.md`** — the Hexlet template one was removed in `e8322d2`.
   Don't reference or try to update it.
 
@@ -52,6 +54,49 @@ npm 10 locally.
   `jsx: "react-jsx"` — the rule would demand `React` in scope and flag every
   JSX element as a false positive.
 - `npm run lint` prints nothing on success.
+
+## Testing (vitest + Testing Library)
+
+- **Do not "upgrade" vitest to v5.** npm 10.8.2 cannot resolve its peer graph at
+  all: `TypeError: Cannot read properties of null (reading 'edgesOut')` in
+  arborist's `#loadPeerSet`. It fails on `npm i -D vitest@5` alone and leaves
+  `package.json` untouched. The project is pinned to `vitest@^4.1.11`, whose
+  `vite` peer (`^6 || ^7 || ^8`) covers vite 8. Moving to v5 means upgrading
+  npm first.
+- **Two deps are capped by Node 20, not by preference.** `jsdom` is `^29` (v30
+  requires Node `^22.22.2`) and `@testing-library/jest-dom` is `~6.9.1` (v7 and
+  6.10.0 require Node ≥22). `~` is deliberate — a caret would drift to 6.10.0
+  and break the install. Revisit all three pins together if Node is upgraded.
+- **Test config lives in `vite.config.ts`; don't split out a
+  `vitest.config.ts`.** Vitest does not merge the two — a `vitest.config.ts`
+  fully *displaces* `vite.config.ts` (verified: with one in place, the
+  `environment` and `setupFiles` from `vite.config.ts` were gone and all tests
+  died on `document is not defined`). JSX still compiles without the `react()`
+  plugin, because Vite transforms TSX from tsconfig's `jsx: react-jsx` — so the
+  plugin was never what made the tests work, and the breakage is *silent* for
+  anything added later (aliases, extra plugins, `define`). Keep one config.
+- **The config uses `/// <reference types="vitest/config" />` rather than
+  importing `defineConfig` from `vitest/config`,** so `vite build` doesn't need
+  vitest installed at runtime. Delete that reference and `tsc` fails on the
+  `test` key.
+- **`src/test/setup.ts` carries three load-bearing lines.** `window.matchMedia`
+  is stubbed because jsdom doesn't implement it and Mantine's
+  `use-provider-color-scheme` calls it (every render test throws otherwise);
+  `import 'dayjs/locale/ru'` is required because tests import `App.tsx` directly
+  and bypass the import in `main.tsx` — without it the calendar silently renders
+  "October 2026" / "MoTuWe..."; and `afterEach(cleanup)` is explicit because
+  RTL's auto-cleanup only self-registers when a *global* `afterEach` exists.
+  Don't delete any of them as unused.
+- **No `globals: true`** — `tsconfig.app.json` pins
+  `types: ["vite/client"]`, so tests must `import { describe, it, expect } from
+  'vitest'`. Adding `globals` means editing that `types` array.
+- Tests are **colocated in `src/`**, so `tsc -b` typechecks them for free and a
+  type error in a test fails `npm run check`.
+- Mantine days are `<button>`s carrying `data-selected` / `data-today` /
+  `data-outside`. Query those, not day text — numbers repeat across outside
+  days, so `getByText('1')` is ambiguous. `data-today` is unique and is the
+  stable click target. Each day also gets a localized default
+  `aria-label` ("3 октября 2026") computed in `Month.mjs`.
 
 ## Mantine v9 dates — check this before writing date code
 
@@ -124,7 +169,7 @@ Overflow answers, and your own priors. Verified against
 ```
 calendar-of-meetings/
 ├── index.html              # Vite entry; mount point #root, <html lang="ru">
-├── vite.config.ts          # react() plugin only — no aliases or env vars
+├── vite.config.ts          # react() plugin + vitest `test` block; no aliases
 ├── postcss.config.cjs      # CommonJS on purpose (package.json is ESM)
 ├── .oxlintrc.json
 ├── tsconfig.json           # project references only
@@ -132,8 +177,10 @@ calendar-of-meetings/
 ├── tsconfig.node.json      # vite.config.ts
 ├── public/favicon.svg      # served at /
 └── src/
-    ├── main.tsx            # createRoot, MantineProvider, Mantine CSS imports
-    └── App.tsx             # all current UI
+    ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
+    ├── App.tsx             # all current UI
+    ├── App.test.tsx        # colocated vitest tests
+    └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup
 ```
 
 `src/App.css`, `src/index.css`, `src/assets/`, and `public/icons.svg` were dead
