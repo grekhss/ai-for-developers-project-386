@@ -223,6 +223,7 @@ calendar-of-meetings/
 ├── tsconfig.json           # project references only
 ├── tsconfig.app.json       # src/ — the app's compiler options
 ├── tsconfig.node.json      # vite.config.ts
+├── ARCHITECTURE.md         # how it's built and why; read before coding
 ├── public/favicon.svg      # served at /
 └── src/
     ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
@@ -231,7 +232,7 @@ calendar-of-meetings/
     ├── components/         # rendering only; props in, no domain rules
     │   ├── BookingModal.tsx   # slot picker in a Modal; controlled time prop
     │   ├── BookingModal.test.tsx
-    │   └── MeetingCalendar.tsx  # the ONLY file importing @mantine/dates
+    │   └── MeetingCalendar.tsx  # the only component that renders date selection
     ├── hooks/              # React state around lib; the only place with useState
     │   ├── useBookings.ts  # load/create bookings; takes a BookingsApi so tests inject a fake
     │   └── useBookings.test.ts
@@ -247,6 +248,12 @@ calendar-of-meetings/
     │       └── inMemory.test.ts
     └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup
 ```
+
+**Read `ARCHITECTURE.md` first.** It covers the layers, the `BookingsApi`
+contract, the decisions that cost something (controlled slot in `App`, inlined
+mount load, `api` prop in `App`) and the known gaps. This file covers commands,
+conventions, and Mantine traps — the two documents deliberately don't repeat each
+other. `plan-first-feature.md` has the step-by-step rationale.
 
 **Three layers:** `lib/` holds pure functions and types with no React and no
 Mantine imports; `components/` renders; `hooks/` is the only place that owns
