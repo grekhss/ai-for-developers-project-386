@@ -1,17 +1,13 @@
 # AGENTS.md
 
-Guidance for AI agents working in this repository.
-
-## What this is
-
-A "Календарь звонков" (call/meeting calendar booking service) — a Hexlet learning
-project (`ai-for-developers`) built with AI assistance. The Vite app lives in
-`calendar-of-meetings/`; the git repository root is one level above.
+Guidance for AI agents working in this app. The git repo root is one level up.
 
 ## Commands
 
-Run everything from `calendar-of-meetings/`. Use **npm** (a `package-lock.json` is
-committed; do not introduce yarn/pnpm/bun).
+This folder is the only package in the repo — there is no root `package.json` and
+no workspaces, so every npm command runs from here. Use **npm**
+(`package-lock.json` is committed; do not introduce yarn/pnpm/bun). Node 20 /
+npm 10 locally.
 
 | Task | Command |
 | --- | --- |
@@ -20,76 +16,101 @@ committed; do not introduce yarn/pnpm/bun).
 | Lint | `npm run lint` |
 | Serve the built output | `npm run preview` |
 
-**There is no `typecheck` script.** `npm run build` runs `tsc -b` first and is the
-only thing that catches type errors, so run it before declaring work done.
+- **There is no `typecheck` script.** `npm run build` runs `tsc -b` first and is
+  the only thing that catches type errors — run it before declaring work done.
+- **There is no test framework and no test script.** Do not add one unprompted.
+  The real suite is external and runs on every push via
+  `.github/workflows/hexlet-check.yml` at the repo root; that file must not be
+  edited, renamed, or deleted.
+- There is **no `README.md`** — the Hexlet template one was removed in `e8322d2`.
+  Don't reference or try to update it.
 
-**There is no test framework and no test script.** Do not add one unprompted. CI
-runs Hexlet's external tests via `.github/workflows/hexlet-check.yml` at the repo
-root — that file must not be edited, renamed, or deleted.
+## Mantine v9 dates — check this before writing date code
 
-## Stack
+`@mantine/dates` is **9.6.3**, whose API differs from most tutorials, Stack
+Overflow answers, and your own priors. Verified against
+`node_modules/@mantine/dates/lib/**/*.d.ts`:
 
-- Vite 8, React 19, TypeScript ~6.0, ESM (`"type": "module"` in package.json)
-- [Mantine v9](https://mantine.dev) — `@mantine/core`, `@mantine/dates`, `@mantine/hooks`
-- [dayjs](https://dayjs.org) for dates (already a dependency — use it rather than
-  adding date-fns/luxon/moment)
-- **oxlint** for linting (not ESLint), configured in `.oxlintrc.json`
-- PostCSS via `postcss-preset-mantine` + `postcss-simple-vars`; the breakpoint
-  variables in `postcss.config.cjs` must match Mantine's own breakpoints
-
-Node 20 is installed locally; `@types/node` is available for Node-side code.
+- **Dates are strings, not `Date` objects.** `DateStringValue = string` in
+  `YYYY-MM-DD` form; `DateValue = DateStringValue | Date | null`. Build and
+  compare these with `dayjs`.
+- **dayjs is a peer dependency** of `@mantine/dates` (`>=1.0.0`) and is listed in
+  `dependencies` on purpose. Never remove or replace it — the calendar breaks
+  without it. Don't add date-fns/luxon/moment alongside it.
+- **`Calendar` cannot select a date.** It exposes `date` / `onDateChange` (the
+  *displayed* month) plus `onMonthSelect` / `onYearSelect`. Its `value` and
+  `onChange` are inherited from the root `div`'s DOM props
+  (`ElementProps<'div'>`), so they are the wrong types for a date — and worse,
+  they **silently do nothing at runtime**, because a `<div>` never fires
+  `change`. Selection state lives only on `DatePicker`, `DateInput`, and
+  `DatePickerInput`; `DatePickerProps` re-declares `value` / `onChange` and
+  supports `type="default" | "multiple" | "range"`. `DatePicker` renders
+  `Calendar` internally, so it is a drop-in replacement. `Month` is **not** one
+  of them: it only takes `month` + `getDayProps` and computes no selection.
+- **`onChange` yields a `DateStringValue`, so type state as `string | null`.**
+  Don't round-trip through `new Date(str)` — `'YYYY-MM-DD'` parses as UTC
+  midnight and renders as the *previous* day in negative-UTC-offset timezones.
+  For display use `dayjs(date).format('D MMMM YYYY')`; the `LL` token needs the
+  unconfigured `dayjs/plugin/localizedFormat`.
+- **Date widgets render English labels by default.** Copy in this app is
+  Russian, so wrap date components in
+  `<DatesProvider settings={{ locale: 'ru' }}>` and `import 'dayjs/locale/ru'`.
+- Prefer `getDayProps` / `renderDay` / `excludeDate` / `getDayAriaLabel` (all
+  take a `DateStringValue`) over reaching into internals. Props prefixed `__`
+  are private — don't pass them.
 
 ## Conventions
 
-- Use the new JSX transform (`jsx: "react-jsx"`). Only `src/main.tsx` imports
-  `React`, and only for `React.StrictMode`. New components do **not** need it.
-- Import Mantine's styles once in `src/main.tsx`, not per component.
-- **User-facing copy is in Russian.** Match it — titles, labels, empty states,
-  button text, `aria-label`s. The only exception is the `<title>` tag in
-  `index.html`.
+- **User-facing copy is in Russian** (`index.html` is `lang="ru"`, page title
+  "Календарь встреч"). Match it — titles, labels, empty states, button text,
+  `aria-label`s. Inline explanatory comments are Russian too (see `main.tsx`).
+- The app is a **dark theme**: `MantineProvider defaultColorScheme="dark"`.
+  Import Mantine's CSS once in `src/main.tsx`, never per component.
 - `verbatimModuleSyntax` is on: type-only imports must use `import type`.
-- `noUnusedLocals` and `noUnusedParameters` are on, and will fail the build.
+- `noUnusedLocals` and `noUnusedParameters` are on and will fail the build.
   Delete unused code rather than prefixing names with `_` to silence it.
 - `erasableSyntaxOnly` is on: no TS-only runtime constructs (enums, parameter
   properties, namespaces).
+- **`strict` is *not* enabled** in `tsconfig.app.json` (unlike the stock Vite
+  template). Don't assume strict-null checking, and don't turn `strict` on
+  unprompted.
+- `tsconfig.app.json` sets `types: ["vite/client"]`, which replaces the usual
+  `src/vite-env.d.ts`. Don't create that file.
 - `moduleResolution: "bundler"` with `allowImportingTsExtensions` — relative
-  imports may carry the `.tsx`/`.ts` extension (see `main.tsx`) but are not
-  required to.
-- Quotes are single. There is **no formatter configured** (no Prettier, no
-  EditorConfig) and semicolon usage is currently inconsistent — `App.tsx` uses
-  them, `main.tsx` and `vite.config.ts` do not. Match the file you are editing
-  rather than reformatting, and do not add a formatter unprompted.
-- Comments should be Russian when they accompany user-facing code, consistent
-  with the existing inline comment in `main.tsx`.
+  imports may carry the `.tsx` extension (see `main.tsx`) but don't have to.
+  There are no path aliases, so nested files import via `../`.
+- Use the new JSX transform (`jsx: "react-jsx"`). Only `src/main.tsx` imports
+  `React`, and only for `React.StrictMode`. New components do **not** need it.
+- **No formatter is configured** (no Prettier, no EditorConfig) and linting is
+  **oxlint**, not ESLint. Single quotes. Semicolon usage is inconsistent on
+  purpose — `App.tsx` has them, `main.tsx` and `vite.config.ts` don't. Match the
+  file you're editing instead of reformatting, and don't add a formatter
+  unprompted.
+- `.oxlintrc.json` enables only `react/rules-of-hooks` (error) and
+  `react/only-export-components` (warn), so `npm run lint` prints nothing on
+  success.
+- Don't "fix" `postcss.config.cjs` to ESM — the `.cjs` extension is required
+  because `package.json` sets `"type": "module"`. Its Mantine breakpoint
+  variables must keep matching Mantine's own breakpoints.
+- New dependencies go in `dependencies` unless they're build- or lint-only.
 
 ## Layout
 
 ```
 calendar-of-meetings/
-├── index.html              # Vite entry; mount point #root, page title
+├── index.html              # Vite entry; mount point #root, <html lang="ru">
 ├── vite.config.ts          # react() plugin only — no aliases or env vars
 ├── postcss.config.cjs      # CommonJS on purpose (package.json is ESM)
 ├── .oxlintrc.json
 ├── tsconfig.json           # project references only
 ├── tsconfig.app.json       # src/ — the app's compiler options
 ├── tsconfig.node.json      # vite.config.ts
-├── public/                 # served at / — favicon.svg, icons.svg
+├── public/favicon.svg      # served at /
 └── src/
-    ├── main.tsx            # createRoot, MantineProvider (defaultColorScheme="dark")
-    ├── App.tsx             # all current UI
+    ├── main.tsx            # createRoot, MantineProvider, Mantine CSS imports
+    └── App.tsx             # all current UI
 ```
 
-`src/App.css`, `src/index.css`, `src/assets/*`, and `public/icons.svg` are dead
-files from the Vite starter template — nothing imports them. They still describe
-a light-themed landing page, which contradicts the dark Mantine theme. Prefer
-deleting them over extending them; if one is kept, it must be imported
-explicitly. Do not treat them as a styling reference.
-
-## Adding features
-
-- There are no path aliases, so relative imports go up as `../`.
-- New dependencies go in `dependencies` unless they are build- or lint-only.
-- Update the `<title>` in `index.html` and the `README.md` install/usage sections
-  at the repo root when the project's shape changes.
-- Before finishing: run `npm run lint` and `npm run build`, and report any
-  failures rather than leaving them unverified.
+`src/App.css`, `src/index.css`, `src/assets/`, and `public/icons.svg` were dead
+Vite-starter leftovers and have since been deleted — don't reintroduce them, and
+don't assume any CSS beyond Mantine's stylesheets.
