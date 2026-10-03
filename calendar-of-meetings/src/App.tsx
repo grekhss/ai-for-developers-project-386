@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Container, Title, Text, Card } from '@mantine/core';
-import { Calendar } from '@mantine/dates';
+import { DatePicker, useDatesContext } from '@mantine/dates';
+import dayjs from 'dayjs';
 
 export default function App() {
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const { locale } = useDatesContext();
 
   return (
     <Container size="sm" py="xl">
@@ -13,14 +15,15 @@ export default function App() {
           Выберите дату для просмотра или создания события.
         </Text>
 
-        <Calendar 
-          value={selectedDate} 
-          onChange={setSelectedDate} 
+        <DatePicker
+          type="default"
+          value={selectedDate}
+          onChange={setSelectedDate}
         />
 
         {selectedDate && (
           <Text mt="md" c="blue">
-            Выбранная дата: {selectedDate.toLocaleDateString()}
+            Выбранная дата: {dayjs(selectedDate).locale(locale).format('D MMMM YYYY')}
           </Text>
         )}
       </Card>
