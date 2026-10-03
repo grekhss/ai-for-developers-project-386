@@ -14,16 +14,44 @@ npm 10 locally.
 | Dev server (HMR) | `npm run dev` |
 | Typecheck + production build | `npm run build` |
 | Lint | `npm run lint` |
+| Lint + autofix safe fixes | `npm run lint:fix` |
+| Lint language server (for editors) | `npm run lint:lsp` |
+| Lint + typecheck, no bundling | `npm run check` |
 | Serve the built output | `npm run preview` |
 
-- **There is no `typecheck` script.** `npm run build` runs `tsc -b` first and is
-  the only thing that catches type errors — run it before declaring work done.
+- **There is no `typecheck` script.** `npm run build` runs `tsc -b` first, and
+  `npm run check` runs lint + `tsc -b` without bundling — those are the two type
+  gates. Note that `npm run dev` gives HMR but **no type feedback**: Vite strips
+  types without checking them, so run `check` (or
+  `npx tsc --noEmit -p tsconfig.app.json --watch` in a second terminal) while
+  developing.
 - **There is no test framework and no test script.** Do not add one unprompted.
   The real suite is external and runs on every push via
   `.github/workflows/hexlet-check.yml` at the repo root; that file must not be
   edited, renamed, or deleted.
 - There is **no `README.md`** — the Hexlet template one was removed in `e8322d2`.
   Don't reference or try to update it.
+
+## Linting (oxlint, not ESLint)
+
+- **oxlint has no `--watch` mode.** There is no re-running lint loop; live
+  feedback comes from the language server (`npm run lint:lsp`, verified working)
+  wired up in your editor, or from `npm run check` by hand.
+- **There is deliberately no pre-commit hook** — no husky, no lint-staged, no
+  active git hooks, and CI does not run the linter. Don't add one unprompted;
+  check whether the project has settled first.
+- **`plugins` in `.oxlintrc.json` *replaces* the default plugin set, it does not
+  extend it.** Adding one plugin silently disables the others, so the array must
+  list every plugin the project wants. (`unicorn` is on by default in oxlint but
+  is *not* in this project's array, so it is inactive — adding it back is a
+  separate decision, not a fix.)
+- `correctness` and `suspicious` are set to **error** so they fail the exit
+  code. `perf` and `react/only-export-components` stay at `warn`, and
+  `--deny-warnings` is not used, so warnings never fail `npm run lint`.
+- `react/react-in-jsx-scope` is **off** because the project uses
+  `jsx: "react-jsx"` — the rule would demand `React` in scope and flag every
+  JSX element as a false positive.
+- `npm run lint` prints nothing on success.
 
 ## Mantine v9 dates — check this before writing date code
 
@@ -86,9 +114,6 @@ Overflow answers, and your own priors. Verified against
   purpose — `App.tsx` has them, `main.tsx` and `vite.config.ts` don't. Match the
   file you're editing instead of reformatting, and don't add a formatter
   unprompted.
-- `.oxlintrc.json` enables only `react/rules-of-hooks` (error) and
-  `react/only-export-components` (warn), so `npm run lint` prints nothing on
-  success.
 - Don't "fix" `postcss.config.cjs` to ESM — the `.cjs` extension is required
   because `package.json` sets `"type": "module"`. Its Mantine breakpoint
   variables must keep matching Mantine's own breakpoints.
