@@ -253,7 +253,7 @@ calendar-of-meetings/
 contract, the decisions that cost something (controlled slot in `App`, inlined
 mount load, `api` prop in `App`) and the known gaps. This file covers commands,
 conventions, and Mantine traps — the two documents deliberately don't repeat each
-other. `plan-first-feature.md` has the step-by-step rationale.
+other.
 
 **Three layers:** `lib/` holds pure functions and types with no React and no
 Mantine imports; `components/` renders; `hooks/` is the only place that owns
