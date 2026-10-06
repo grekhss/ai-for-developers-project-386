@@ -7,7 +7,7 @@
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
 - Обоснование и история шагов — в [`plan-first-feature.md`](./plan-first-feature.md).
 
-Проверено на: 17 файлов в `src/`, 40 тестов в 6 файлах, `npm run check` и
+Проверено на: 17 файлов в `src/`, 43 теста в 6 файлах, `npm run check` и
 `npm run build` зелёные. Стек: React 19, Mantine 9.6.3, dayjs, TypeScript 6
 со `strict`, Vite 8, vitest 4, oxlint.
 
@@ -32,7 +32,7 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App
         ▼                                                        │
  App: selectedDate, time ──────── onChangeTime ──────────────────┘
         │
-        │ handleBook(draft) ──► void createBooking(draft)
+        │ handleBook(draft) ──► await createBooking(draft) ──► Booking | null
         ▼
  useBookings(api) ──► BookingsApi ──► createInMemoryBookingsApi
         │
@@ -85,7 +85,7 @@ BookingsApi {
 2. `new Date('YYYY-MM-DD')` разбирается как полночь UTC и в отрицательных
    часовых поясах показывает предыдущий день;
 3. строки `'YYYY-MM-DD'` лексикографически упорядочены так же, как
-   хронологически, поэтому `inMemory.ts:17` фильтрует и сортирует без `dayjs`.
+   хронологически, поэтому `inMemory.ts:18` фильтрует и сортирует без `dayjs`.
 
 Правило доступности дня тоже живёт в `lib` и обращается к трём независимым
 функциям: `isPast` сравнивает по дням (`isBefore(dayjs(), 'day')`), а не по
@@ -111,17 +111,17 @@ const notBookable = (date: string): boolean => !isBookable(date);
 Очевидная версия — `useState` внутри модалки — упирается в
 `react/set-state-in-effect`: сброс при смене даты пришлось бы делать в эффекте, а
 правило его запрещает. Контролируемый пропс `time` сбрасывается прямо в
-обработчике клика по дате (`src/App.tsx:44`), `key`-remount не нужен:
+обработчике клика по дате (`src/App.tsx:49`), `key`-remount не нужен:
 
 ```tsx
-onSelect={(date) => { setTime(null); setSelectedDate(date); }}
+onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date); }}
 ```
 
 Побочная выгода: `BookingModal` всегда смонтирован и получает `date: string | null`,
 где `null` означает закрыто, поэтому Mantine не теряет анимацию закрытия.
 
 **Первичная загрузка объявлена инлайном в эффекте, а не вызовом `refresh`**
-(`src/hooks/useBookings.ts:74`). Правило `react/set-state-in-effect` срабатывает
+(`src/hooks/useBookings.ts:79`). Правило `react/set-state-in-effect` срабатывает
 **транзитивно**: оно ругается на вызов функции, трогающей состояние, из тела
 эффекта — даже если `setState` происходит после `await`. Отсюда флаг `cancelled`:
 он же спасает от двойного вызова эффекта в `StrictMode`.
@@ -129,7 +129,9 @@ onSelect={(date) => { setTime(null); setSelectedDate(date); }}
 **`lastBooked` хранит `BookingDraft`, а не `Booking`** (`src/App.tsx:18`). Нужен
 только для строки «Запись: …». У `Booking` нет времени создания, поэтому «самая
 свежая» из отсортированного массива не выводится, а «последняя по дате» — это не
-то, что записал пользователь.
+то, что записал пользователь. Строка ставится только если `createBooking`
+вернул запись (при неудаче — `null`), и сбрасывается выбором дня прямо в
+`onSelect`, без эффектов.
 
 **Проп `api` в `App` — не удобство, а необходимость** (`src/App.tsx:12`).
 `lib/bookings/api.ts:19` экспортирует модульный синглтон; без подмены записи
@@ -150,7 +152,7 @@ onSelect={(date) => { setTime(null); setSelectedDate(date); }}
 | Праздники, дни без свободных слотов | `lib/date.ts:34` `isBookable`. |
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
 | Горизонт списка записей | `src/hooks/useBookings.ts:11` `HORIZON_DAYS`. |
-| Ручное обновление списка | `refresh` уже возвращается хуком (`useBookings.ts:52`), но UI его пока не вызывает — кнопка добавится без изменения хука. |
+| Ручное обновление списка | `refresh` уже возвращается хуком (`useBookings.ts:55`), но UI его пока не вызывает — кнопка добавится без изменения хука. |
 | Список всех записей (не только модалка) | `App.tsx` получает весь массив `bookings`; сортировка и фильтрация — его дело, а не компонентов. |
 
 ## 7. Известные ограничения
@@ -172,15 +174,16 @@ onSelect={(date) => { setTime(null); setSelectedDate(date); }}
    `MeetingCalendar` и диапазон из отображаемого месяца — правка хука и API.
 3. **`inMemory.create` не проверяет конфликты.** Двойная запись на один слот
    возможна, `disableTime` защищает только UI. При появлении бэкенда уникальность
-   должна проверяться сервером; `createBooking` уже кладёт ошибку в `error`, не
-   бросая её наружу (`useBookings.ts:60`).
+   должна проверяться сервером; `createBooking` уже кладёт ошибку в `error` и
+   возвращает `null` вместо записи (`useBookings.ts:63`) — по этому `null`
+   `App` не показывает строку «Запись: …».
 4. **Запись не переживает перезагрузку** — in-memory хранилище. Ожидаемо до
    бэкенда.
 
 ## 8. Тестовая стратегия
 
-40 тестов: `date.ts` 10, `slots.ts` 4, `inMemory` 6, `useBookings` 5,
-`BookingModal` 8, `App` 7 (сквозной сценарий). Тесты колоцированы в `src/`,
+43 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `useBookings` 5,
+`BookingModal` 8, `App` 9 (сквозной сценарий). Тесты колоцированы в `src/`,
 поэтому `tsc -b` проверяет их типы бесплатно, и ошибка типа в тесте роняет
 `npm run check`.
 
@@ -199,12 +202,14 @@ onSelect={(date) => { setTime(null); setSelectedDate(date); }}
 - **Классы в Mantine v9 — `mantine-DatePicker-*`, не `mantine-Calendar-*`.**
   Проверенные: `-weekday` (7 ячеек, lowercase «пн»…«вс»), `-weekdaysRow`,
   `-calendarHeaderLevel`, `-day`, `-monthTbody`.
-- **Интеграционный тест обязан получить `api={createInMemoryBookingsApi()}`** —
-  см. раздел 5.
+- **Интеграционный тест обязан передать свой `api`** (обычно
+  `createInMemoryBookingsApi()`, для неудачного создания — заглушку с падающим
+  `create`) — см. раздел 5.
 
-Каждый новый тест проверен мутацией: с `takenTimes={[]}` и без
-`setLastBooked(draft)` падают ровно два ожидаемых теста. Это дешевле, чем потом
-отлаживать «зелёный, но ничего не проверяющий» тест.
+Каждый новый тест проверен мутацией: `takenTimes={[]}` валит тест «занятый
+слот в следующий раз не выбирается», удаление `setLastBooked(draft)` из
+`handleBook` — три теста: два прежних и новый, на сброс строки. Это дешевле,
+чем потом отлаживать «зелёный, но ничего не проверяющий» тест.
 
 ## 9. Чек-лист инвариантов для агента
 
@@ -215,7 +220,7 @@ onSelect={(date) => { setTime(null); setSelectedDate(date); }}
 - [ ] Не добавляется `useEffect` с `setState` и не вызывается из эффекта функция,
       которая его трогает.
 - [ ] Новый render-тест обёрнут в `MantineProvider`, интеграционный — получает
-      `createInMemoryBookingsApi()`.
+      свой `api` (своё хранилище вместо модульного синглтона).
 - [ ] Каждый новый тест проверен мутацией.
 - [ ] Пользовательский текст и комментарии — по-русски, `import type` для
       типов, точки с запятой как в редактируемом файле.
