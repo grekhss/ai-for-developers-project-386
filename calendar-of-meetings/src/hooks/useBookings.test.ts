@@ -47,10 +47,11 @@ describe('useBookings', () => {
     const { result } = renderHook(() => useBookings(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    await result.current.createBooking({ date: futureDate, time: '11:00' });
+    const created = await result.current.createBooking({ date: futureDate, time: '11:00' });
 
     await waitFor(() => expect(result.current.bookings).toHaveLength(1));
 
+    expect(created).toMatchObject({ date: futureDate, time: '11:00' });
     expect(result.current.bookings[0]).toMatchObject({ date: futureDate, time: '11:00' });
     expect(result.current.error).toBeNull();
   });
@@ -61,7 +62,7 @@ describe('useBookings', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     await expect(
       result.current.createBooking({ date: futureDate, time: '11:00' })
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
 
     expect(result.current.error).not.toBeNull();
   });

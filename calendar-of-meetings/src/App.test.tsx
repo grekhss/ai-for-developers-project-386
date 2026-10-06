@@ -5,13 +5,22 @@ import { MantineProvider } from '@mantine/core';
 import { DatesProvider } from '@mantine/dates';
 import App from './App.tsx';
 import { createInMemoryBookingsApi } from './lib/bookings/inMemory.ts';
+import type { BookingsApi } from './lib/bookings/api.ts';
 import { APP_LOCALE } from './lib/date.ts';
 
 const DATES_SETTINGS = { locale: APP_LOCALE };
 
-function renderApp() {
-  // Своё хранилище на каждый тест: записи не должны утекать между сценариями.
-  const api = createInMemoryBookingsApi();
+/** `create` всегда падает — для проверки неудачной записи. */
+function failingApi(): BookingsApi {
+  return {
+    list: () => Promise.resolve([]),
+    create: () => Promise.reject(new Error('нет связи')),
+  };
+}
+
+// Своё хранилище на каждый тест (значение по умолчанию): записи не должны
+// утекать между сценариями.
+function renderApp(api: BookingsApi = createInMemoryBookingsApi()) {
   const view = render(
     <MantineProvider defaultColorScheme="dark">
       <DatesProvider settings={DATES_SETTINGS}>
@@ -147,5 +156,53 @@ describe('календарь встреч', () => {
 
     expect(await screen.findByRole('button', { name: '11:00' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '13:00' })).toBeEnabled();
+  });
+
+  it('не показывает запись, если создание не удалось', async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp(failingApi());
+
+    await openFirstBookableDay(user, container);
+
+    await user.click(await screen.findByRole('button', { name: '11:00' }));
+    await user.click(screen.getByRole('button', { name: 'Записаться' }));
+
+    expect(
+      await screen.findByText('Не удалось создать запись. Выберите другое время.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Запись:/)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('Выберите время для встречи')).not.toBeInTheDocument();
+    });
+  });
+
+  it('выбор другой даты сбрасывает строку записи', async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+
+    const label = await openFirstBookableDay(user, container);
+
+    await user.click(await screen.findByRole('button', { name: '11:00' }));
+    await user.click(screen.getByRole('button', { name: 'Записаться' }));
+    await screen.findByText(/^Запись:/);
+
+    // Другой доступный день: следующий в этом месяце либо первый в следующем.
+    let other = bookableDays(container)
+      .find((day) => day.getAttribute('aria-label') !== label);
+
+    if (other === undefined) {
+      const next = container.querySelector<HTMLButtonElement>('[data-direction="next"]');
+      expect(next).not.toBeNull();
+      await user.click(next as HTMLButtonElement);
+      other = bookableDays(container)[0];
+    }
+
+    expect(other).toBeDefined();
+    await user.click(other as HTMLButtonElement);
+
+    expect(screen.queryByText(/^Запись:/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Выберите дату, чтобы посмотреть свободные слоты.')
+    ).toBeInTheDocument();
   });
 });
