@@ -24,8 +24,11 @@ interface BookingsState {
 export interface UseBookingsResult extends BookingsState {
   /** Перечитывает записи. */
   refresh: () => Promise<void>;
-  /** Создаёт запись. Ошибки не бросает, а кладёт в `error`. */
-  createBooking: (draft: BookingDraft) => Promise<void>;
+  /**
+   * Создаёт запись и возвращает её. Ошибки не бросает: кладёт текст в `error`
+   * и возвращает `null` — так вызывающий отличает успех от неудачи.
+   */
+  createBooking: (draft: BookingDraft) => Promise<Booking | null>;
 }
 
 /**
@@ -59,10 +62,12 @@ export function useBookings(api: BookingsApi = bookingsApi): UseBookingsResult {
 
   const createBooking = useCallback(async (draft: BookingDraft) => {
     try {
-      await api.create(draft);
+      const booking = await api.create(draft);
       await refresh();
+      return booking;
     } catch {
       setState((previous) => ({ ...previous, error: CREATE_ERROR }));
+      return null;
     }
   }, [api, refresh]);
 

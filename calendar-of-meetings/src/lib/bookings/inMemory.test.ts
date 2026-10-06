@@ -48,6 +48,17 @@ describe('createInMemoryBookingsApi', () => {
     expect(await api.list({ from: '2026-10-01', to: '2026-10-31' })).toEqual([created]);
   });
 
+  it('не выдаёт создаваемой записи идентификатор, занятый сидом', async () => {
+    const api = createInMemoryBookingsApi([
+      { id: '2', date: '2026-10-06', time: '10:00' },
+      { id: '3', date: '2026-10-05', time: '09:00' },
+    ]);
+
+    const created = await api.create({ date: '2026-10-07', time: '15:30' });
+
+    expect(created.id).toBe('4');
+  });
+
   it('не делит хранилище между вызовами фабрики', async () => {
     const first = createInMemoryBookingsApi(seed);
     const second = createInMemoryBookingsApi(seed);

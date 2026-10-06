@@ -7,7 +7,9 @@ import type { Booking } from './types.ts';
  */
 export function createInMemoryBookingsApi(seed: Booking[] = []): BookingsApi {
   const bookings: Booking[] = [...seed];
-  let lastId = bookings.length;
+  // Максимум id сида, а не его длина: при сиде ['2', '3'] длина дала бы
+  // следующий id '3' — уже занятый.
+  let lastId = bookings.reduce((max, booking) => Math.max(max, Number(booking.id) || 0), 0);
 
   return {
     async list({ from, to }) {

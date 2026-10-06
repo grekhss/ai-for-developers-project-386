@@ -27,9 +27,12 @@ export default function App({ api = bookingsApi }: AppProps) {
     setTime(null);
   }
 
-  function handleBook(draft: BookingDraft) {
-    void createBooking(draft);
-    setLastBooked(draft);
+  async function handleBook(draft: BookingDraft) {
+    const created = await createBooking(draft);
+    // Строка «Запись: …» — только при успехе: иначе при ошибке создания
+    // под календарём висели бы и красная ошибка, и синяя запись.
+    if (created !== null) setLastBooked(draft);
+    // Окно закрываем в любом случае — ошибка рендерится под модалкой.
     closeModal();
   }
 
@@ -44,6 +47,7 @@ export default function App({ api = bookingsApi }: AppProps) {
         <MeetingCalendar
           value={selectedDate}
           onSelect={(date) => {
+            setLastBooked(null);
             setTime(null);
             setSelectedDate(date);
           }}
