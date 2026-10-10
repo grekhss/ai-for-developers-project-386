@@ -11,22 +11,33 @@ npm 10 locally.
 
 | Task | Command |
 | --- | --- |
-| Dev server (HMR) | `npm run dev` |
-| Typecheck + production build | `npm run build` |
+| Dev (Vite HMR + API-сервер) | `npm run dev` |
+| API-сервер только (watch) | `npm run dev:server` |
+| Prod-сборка фронта и сервера | `npm run build` |
+| Запуск прод-сервера (API + статика) | `npm start` — только после `npm run build` |
 | Lint | `npm run lint` |
 | Lint + autofix safe fixes | `npm run lint:fix` |
 | Lint language server (for editors) | `npm run lint:lsp` |
 | Tests (single run) | `npm test` |
 | Tests (watch mode) | `npm run test:watch` |
 | Full gate: lint + typecheck + tests | `npm run check` |
-| Serve the built output | `npm run preview` |
+| Preview собранной статики | `npm run preview` — без `/api`, записи не грузятся |
 
 - **There is no `typecheck` script.** `npm run build` runs `tsc -b` first, and
-  `npm run check` runs lint + `tsc -b` + vitest without bundling — those are the
-  two type gates. Note that `npm run dev` gives HMR but **no type feedback**:
-  Vite strips types without checking them, so run `check` (or
+  `npm run check` runs lint + `tsc -b` + `tsc -p tsconfig.server.json --noEmit`
+  + vitest without bundling — those are the two type gates. Note that `npm run
+  dev` gives HMR but **no type feedback**: Vite and `tsx watch` strip types
+  without checking them, so run `check` (or
   `npx tsc --noEmit -p tsconfig.app.json --watch` in a second terminal) while
   developing.
+- **`npm run dev` starts two processes** (concurrently: `tsx watch server/index.ts`
+  and `vite`); Ctrl-C kills both (`-k`). There is a startup race: the first
+  request can arrive before `listen(PORT)` → a one-off `LOAD_ERROR` under the
+  calendar; acceptable.
+- **`npm start` serves only after `npm run build`** — it needs both `dist/` and
+  `dist-server/`.
+- **`npm run preview` is a build-only smoke check.** It serves the static
+  `dist/` without `/api`, so bookings fail to load.
 - Hexlet's own suite is separate and external: it runs on every push via
   `.github/workflows/hexlet-check.yml` at the repo root, which must not be
   edited, renamed, or deleted. It does **not** run lint, typecheck, or the local
@@ -78,6 +89,13 @@ npm 10 locally.
   plugin, because Vite transforms TSX from tsconfig's `jsx: react-jsx` — so the
   plugin was never what made the tests work, and the breakage is *silent* for
   anything added later (aliases, extra plugins, `define`). Keep one config.
+- **Vitest runs two `projects` in `vite.config.ts`: `app` and `server`.**
+  `app` — jsdom + `src/test/setup.ts`, files under `src/**`; `server` — node,
+  no setup, files under `server/**` (they carry `@vitest-environment node` and
+  use `:memory:` SQLite). The setup's `window.matchMedia` stub only applies to
+  the app project — under node it would crash. Default `include`/`exclude` are
+  not enough here: the explicit `include` also keeps any built
+  `dist-server/*.test.js` from running.
 - **The config uses `/// <reference types="vitest/config" />` rather than
   importing `defineConfig` from `vitest/config`,** so `vite build` doesn't need
   vitest installed at runtime. Delete that reference and `tsc` fails on the
@@ -161,6 +179,12 @@ Overflow answers, and your own priors. Verified against
 
 ## Conventions
 
+- **Server imports carry the `.js` suffix** (`server/routes.ts` imports
+  `./repository.js`). `moduleResolution: nodenext` + ESM require it, and both
+  `tsx` and vitest resolve `.js` → `.ts` for TS importers. Don't mix with `src/`,
+  where `moduleResolution: bundler` and extensions are optional. `rootDir:
+  server` blocks any import from `src/` — that's deliberate (domain rules stay on
+  the front, see ARCHITECTURE §7).
 - **User-facing copy is in Russian** (`index.html` is `lang="ru"`, page title
   "Календарь встреч"). Match it — titles, labels, empty states, button text,
   `aria-label`s. Inline explanatory comments are Russian too (see `main.tsx`).
@@ -217,14 +241,28 @@ Overflow answers, and your own priors. Verified against
 ```
 calendar-of-meetings/
 ├── index.html              # Vite entry; mount point #root, <html lang="ru">
-├── vite.config.ts          # react() plugin + vitest `test` block; no aliases
+├── vite.config.ts          # react() plugin + vitest projects (app/server) + /api proxy
 ├── postcss.config.cjs      # CommonJS on purpose (package.json is ESM)
 ├── .oxlintrc.json
 ├── tsconfig.json           # project references only
 ├── tsconfig.app.json       # src/ — the app's compiler options
 ├── tsconfig.node.json      # vite.config.ts
+├── tsconfig.server.json    # server/ + его тесты (nodenext, rootDir: server)
+├── tsconfig.server.build.json  # эмитит dist-server/ (тесты исключены)
 ├── ARCHITECTURE.md         # how it's built and why; read before coding
+├── data/bookings.sqlite    # SQLite-файл (в .gitignore; создаётся в server/db.ts)
+├── dist-server/            # собранный сервер (в .gitignore)
 ├── public/favicon.svg      # served at /
+├── server/                 # express + better-sqlite3; импорты — с .js-суффиксом
+│   ├── index.ts            # wiring: БД → createApp → listen; логики нет
+│   ├── app.ts              # createApp: express.json, роуты, статика dist/
+│   ├── routes.ts           # GET/POST /api/bookings
+│   ├── repository.ts       # createRepository: list/create; UNIQUE → DuplicateBookingError
+│   ├── db.ts               # createDatabase + defaultDbPath (data/bookings.sqlite)
+│   ├── validate.ts         # форматная валидация тела и query (не домен!)
+│   ├── types.ts            # Booking/BookingDraft — копия контракта из src
+│   ├── repository.test.ts  # @vitest-environment node
+│   └── routes.test.ts      # интеграция: createApp(':memory:') + listen(0) + fetch
 └── src/
     ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
     ├── App.tsx             # page-level state and layout; renders components/
@@ -243,10 +281,12 @@ calendar-of-meetings/
     │   ├── slots.test.ts
     │   └── bookings/
     │       ├── types.ts    # Booking, BookingDraft, DateRange
-    │       ├── api.ts      # BookingsApi interface + the instance the app uses
-    │       ├── inMemory.ts # the current implementation, a factory so state isn't shared
+    │       ├── api.ts      # BookingsApi interface + the instance the app uses (HTTP)
+    │       ├── http.ts     # createHttpBookingsApi — fetch на /api/bookings
+    │       ├── http.test.ts
+    │       ├── inMemory.ts # тестовая фабрика/fake (createInMemoryBookingsApi)
     │       └── inMemory.test.ts
-    └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup
+    └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup (app-проект vitest)
 ```
 
 **Read `ARCHITECTURE.md` first.** It covers the layers, the `BookingsApi`
