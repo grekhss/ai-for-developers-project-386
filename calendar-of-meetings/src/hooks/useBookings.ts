@@ -66,6 +66,11 @@ export function useBookings(api: BookingsApi = bookingsApi): UseBookingsResult {
       await refresh();
       return booking;
     } catch {
+      // При конфликте (409) сервер не создал запись, а локальный список устарел:
+      // чужой занятый слот остался бы визуально свободным. Сначала перечитываем,
+      // потом ставим текст ошибки — refresh при успехе сбрасывает error в null
+      // (useBookings.ts:57), и наоборот порядок стёр бы CREATE_ERROR.
+      await refresh();
       setState((previous) => ({ ...previous, error: CREATE_ERROR }));
       return null;
     }

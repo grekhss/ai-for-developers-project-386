@@ -1,22 +1,22 @@
 # Архитектура
 
-Описание состояния проекта на конец реализации первой функциональности
-(календарь встреч). Документ отвечает на вопрос «как устроено и почему», а не
-«как запустить».
+Описание состояния проекта на конец второй функциональности: календарь встреч
+с персистентным бэкендом. Документ отвечает на вопрос «как устроено и почему»,
+а не «как запустить».
 
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
-- Обоснование и история шагов — в [`plan-first-feature.md`](./plan-first-feature.md).
 
-Проверено на: 17 файлов в `src/`, 43 теста в 6 файлах, `npm run check` и
-`npm run build` зелёные. Стек: React 19, Mantine 9.6.3, dayjs, TypeScript 6
-со `strict`, Vite 8, vitest 4, oxlint.
+Проверено на: 19 файлов в `src/`, 9 файлов в `server/`, 62 теста в 9 файлах,
+`npm run check` и `npm run build` зелёные. Стек: React 19, Mantine 9.6.3, dayjs,
+TypeScript 6 со `strict`, Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12.
 
 ## 1. Что это
 
-Одностраничное приложение: календарь встреч. Пользователь выбирает день, во
-всплывающем окне выбирает слот, запись сохраняется через абстракцию доступа к
-данным. Данные пока в памяти — бэкенд запланирован, под него уже подготовлен
-шов: замена реализации не затрагивает ни компоненты, ни хуки.
+Одностраничное приложение + собственный серверный процесс: календарь встреч.
+Пользователь выбирает день, во всплывающем окне выбирает слот, запись уходит по
+HTTP на express-сервер и хранится в SQLite — поэтому переживает перезапуск, а
+дубль слота отклоняется сервером. Компоненты и хуки видят только абстракцию
+`BookingsApi` (§4), смена реализации их не затрагивает.
 
 ## 2. Поток данных
 
@@ -34,12 +34,19 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App
         │
         │ handleBook(draft) ──► await createBooking(draft) ──► Booking | null
         ▼
- useBookings(api) ──► BookingsApi ──► createInMemoryBookingsApi
-        │
-        └─► bookings ─► App.takenTimes ─► BookingModal disableTime
-                │
-                └─► bookings / error / loading ─► строки статуса под календарём
+ useBookings(api) ──► BookingsApi ──► createHttpBookingsApi ──► fetch /api/bookings
+        │                                                          (в dev — Vite-прокси,
+        │                                                           в проде — тот же origin)
+        │                                                          ▼
+        └─► bookings ─► App.takenTimes ─► BookingModal disableTime   express (server/):
+        │                                 validate (только формат) → repository → SQLite
+        │                                                           (data/bookings.sqlite)
+        └─► bookings / error / loading ─► строки статуса под календарём
 ```
+
+Запросы формирует только `createHttpBookingsApi` (`src/lib/bookings/http.ts`);
+за ними стоит поток «репозиторий → SQLite», описанный в §3. В dev `/api`
+проксируется Vite на :4000, в проде express отдаёт и API, и статику из `dist/`.
 
 Ключевое: **Mantine не протекает наружу `components/`.** Наружу отдаются
 строки `'YYYY-MM-DD'` и `'HH:mm'`, поэтому остальной код не зависит ни от версии
@@ -49,13 +56,20 @@ Mantine, ни от его внутреннего устройства.
 
 | Слой | Файлы | Правило |
 | --- | --- | --- |
-| `lib/` | `date.ts`, `slots.ts`, `bookings/{types,api,inMemory}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. |
+| `lib/` | `date.ts`, `slots.ts`, `bookings/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. |
 | `hooks/` | `useBookings.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственный мост к `BookingsApi`. |
 | `components/` | `MeetingCalendar.tsx`, `BookingModal.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
 | `App.tsx` | — | Только UI-состояние и раскладка. Не импортирует `@mantine/dates`. |
 
 Зависимости строго односторонние: `App → components → lib`, `App → hooks → lib`.
 Обратных импортов нет.
+
+Отдельный процесс — `server/`: express-приложение, собираемое фабрикой
+`createApp`, и репозиторий поверх better-sqlite3 (`createRepository`).
+`rootDir: server` закрывает импорт из `src/` — варианта протечь доменное правило
+на сервер нет, что и держит инвариант «домен не дублируется» (§9). Граница между
+сторонами — контракт §4; на фронте ему отвечает одна реализация (`http.ts`),
+на сервере — `routes.ts` + `repository.ts`.
 
 **Домен не дублируется.** «Можно ли в этот день записаться» — это
 `lib/date.ts:34` (`isBookable`), а не проверка внутри компонента. «Как написать
@@ -85,7 +99,11 @@ BookingsApi {
 2. `new Date('YYYY-MM-DD')` разбирается как полночь UTC и в отрицательных
    часовых поясах показывает предыдущий день;
 3. строки `'YYYY-MM-DD'` лексикографически упорядочены так же, как
-   хронологически, поэтому `inMemory.ts:18` фильтрует и сортирует без `dayjs`.
+   хронологически, поэтому и `inMemory`, и SQLite (`BETWEEN` + `ORDER BY`)
+   фильтруют и сортируют без dayjs.
+
+Этот же контракт повторяет HTTP: `id` отдаётся строкой, границы диапазона
+включены, сортировка — по `(date, time)`.
 
 Правило доступности дня тоже живёт в `lib` и обращается к трём независимым
 функциям: `isPast` сравнивает по дням (`isBefore(dayjs(), 'day')`), а не по
@@ -144,11 +162,19 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 той же причине. Отдельный тест «не делит хранилище между вызовами фабрики»
 фиксирует это намерение.
 
+**После конфликта (409) `createBooking` перечитывает список до показа ошибки**
+(`src/hooks/useBookings.ts`). Если сервер отклонил слот, локальный `bookings`
+устарел: чужой занятый слот остался бы визуально свободным. Поэтому в `catch`
+сначала `await refresh()`, и только потом `error: CREATE_ERROR` — обратный
+порядок стёр бы текст ошибки, потому что `refresh` при успехе ставит
+`error: null`.
+
 ## 6. Точки расширения
 
 | Задача | Что менять |
 | --- | --- |
-| Бэкенд | `lib/bookings/api.ts:19` — одна строка на HTTP-клиент с тем же интерфейсом. Компоненты и хуки не трогаются. |
+| Смена хранилища/формата на сервере | Весь сервер за `BookingsApi` фронта: `bookingsApi` уже указывает на `createHttpBookingsApi()` (`api.ts:19`); дальше трогается только `server/`. |
+| Доменная валидация на сервере (2-й клиент, публичный API) | Сейчас сервер проверяет только формат (§7-3). Правила (`isBookable`, сетка слотов) вынести в общий модуль и звать из `server/validate.ts`; UI продолжит пользоваться `lib/`. |
 | Праздники, дни без свободных слотов | `lib/date.ts:34` `isBookable`. |
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
 | Горизонт списка записей | `src/hooks/useBookings.ts:11` `HORIZON_DAYS`. |
@@ -172,20 +198,31 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 2. **Горизонт 90 дней фиксирован и не связан с показанным месяцем.** Запись на
    4-й месяц вперёд не помечается занятым днём. Нужен `onMonthChange` в
    `MeetingCalendar` и диапазон из отображаемого месяца — правка хука и API.
-3. **`inMemory.create` не проверяет конфликты.** Двойная запись на один слот
-   возможна, `disableTime` защищает только UI. При появлении бэкенда уникальность
-   должна проверяться сервером; `createBooking` уже кладёт ошибку в `error` и
-   возвращает `null` вместо записи (`useBookings.ts:63`) — по этому `null`
-   `App` не показывает строку «Запись: …».
-4. **Запись не переживает перезагрузку** — in-memory хранилище. Ожидаемо до
-   бэкенда.
+3. **Сервер валидирует только формат, не домен.** Прошедшие даты, выходные и
+   время вне сетки слотов принимаются. UI такие draft'ы не генерирует
+   (`excludeDate` в календаре, сетка `TimeGrid`, `disableTime` в модалке),
+   поэтому дыра достижима только обходом UI; мусорные записи не показываются
+   как занятые. При появлении второго клиента или публичного API — валидировать
+   на сервере, вынося доменные правила в общий модуль (§6).
 
 ## 8. Тестовая стратегия
 
-43 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `useBookings` 5,
-`BookingModal` 8, `App` 9 (сквозной сценарий). Тесты колоцированы в `src/`,
-поэтому `tsc -b` проверяет их типы бесплатно, и ошибка типа в тесте роняет
-`npm run check`.
+62 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useBookings` 6,
+`BookingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 5,
+`routes` 8. Фронтовые тесты колоцированы в `src/`, поэтому `tsc -b` проверяет их
+типы бесплатно; серверные проверяет `tsc -p tsconfig.server.json --noEmit`.
+
+Vitest разведён на два проекта в `vite.config.ts`: `app` (jsdom + `setup.ts`,
+`src/**`) и `server` (node, без `setup.ts`, `server/**`). Глобальный `setup.ts`
+пишет в `window` — под node-окружением он упал бы, поэтому серверным тестам
+он не подключён, а `environment` задан и проектом, и docblock'ом
+`@vitest-environment node` на всякий случай.
+
+Серверные тесты собирают приложение как в проде: `createApp(createRepository(':memory:'))`
+и ходят через реальный `listen(0)` + `fetch` (routes) либо через репозиторий
+напрямую (repository). Через `index.ts` не ходят — он биндит порт и открывает
+файловую БД. В `repository.test.ts` отдельно проверено, что не-UNIQUE ошибки БД
+не маскируются под дубль: подменяется схема на CHECK-ограничение.
 
 Требования, каждое из которых уже стоило времени:
 
@@ -221,6 +258,10 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
       которая его трогает.
 - [ ] Новый render-тест обёрнут в `MantineProvider`, интеграционный — получает
       свой `api` (своё хранилище вместо модульного синглтона).
+- [ ] `server/` не импортирует из `src/` (`rootDir: server`); импорты внутри —
+      с `.js`-суффиксом (nodenext).
+- [ ] Сервер не дублирует доменные правила: только формат (§7-3), константы
+      слотов в `server/` не заводим.
 - [ ] Каждый новый тест проверен мутацией.
 - [ ] Пользовательский текст и комментарии — по-русски, `import type` для
       типов, точки с запятой как в редактируемом файле.
@@ -229,15 +270,23 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 ## 10. Проверки
 
 ```bash
-npm run check   # oxlint && tsc -b && vitest run — единственный полный гейт
-npm run build   # tsc -b && vite build
+npm run check   # oxlint && tsc -b && tsc -p tsconfig.server.json --noEmit && vitest run
+npm run build   # tsc -b && vite build && tsc -p tsconfig.server.build.json — dist/ и dist-server/
+npm start       # node dist-server/index.js — только после build; API + статика из dist/
+npm run dev     # vite + сервер (concurrently); сервер отдельно — npm run dev:server
 npm run lint    # линтер отдельно
 npm test        # vitest run
 ```
 
-`npm run dev` **не даёт обратной связи по типам**: Vite вырезает типы, не
-проверяя их. Для проверки типов в разработке —
-`npx tsc --noEmit -p tsconfig.app.json --watch` во втором терминале.
+`npm run dev` поднимает два процесса. **Гонка старта**: первый запрос может
+улететь до `listen(PORT)` → разовый `LOAD_ERROR` под календарём; приемлемо.
+`npm run preview` — только проверка собранной статики: `/api` она не знает,
+поэтому записи не грузятся.
+
+`npm run dev` **не даёт обратной связи по типам** (ни фронт, ни сервер): Vite
+и `tsx watch` вырезают типы, не проверяя их. Для проверки типов в разработке —
+`npx tsc --noEmit -p tsconfig.app.json --watch` и
+`npx tsc --noEmit -p tsconfig.server.json --watch` во втором терминале.
 
 Линтер — `oxlint`, не ESLint. В `.oxlintrc.json` категории `correctness` и
 `suspicious` это `error` и роняют код выхода, `perf` — `warn`, поэтому текущие

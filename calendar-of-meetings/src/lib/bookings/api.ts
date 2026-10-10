@@ -1,4 +1,4 @@
-import { createInMemoryBookingsApi } from './inMemory.ts';
+import { createHttpBookingsApi } from './http.ts';
 import type { Booking, BookingDraft, DateRange } from './types.ts';
 
 /**
@@ -13,7 +13,8 @@ export interface BookingsApi {
 }
 
 /**
- * Реализация, которой пользуется приложение. Когда появится бэкенд, здесь
- * меняется одна строка на HTTP-клиент с тем же интерфейсом.
+ * Реализация, которой пользуется приложение: HTTP-клиент на /api/bookings
+ * (в dev его проксирует Vite, в проде отдаёт express-сервер). Тесты подставляют
+ * свою реализацию через проп api, поэтому менять её здесь больше не нужно.
  */
-export const bookingsApi: BookingsApi = createInMemoryBookingsApi();
+export const bookingsApi: BookingsApi = createHttpBookingsApi();

@@ -67,6 +67,34 @@ describe('useBookings', () => {
     expect(result.current.error).not.toBeNull();
   });
 
+  it('после конфликта список перечитан и ошибка показана', async () => {
+    // Запись «с сервера», которой нет в локальном состоянии хука: лица,
+    // попадающие в список только после перечитывания.
+    const serverBooking: Booking = { id: '1', date: futureDate, time: '10:00' };
+    const list = vi.fn<() => Promise<Booking[]>>(() => Promise.resolve([serverBooking]));
+    const api: BookingsApi = {
+      list,
+      // Симулируем 409 сервера: create отклоняется, запись не добавляется.
+      create: () => Promise.reject(new Error('дубль слота')),
+    };
+
+    const { result } = renderHook(() => useBookings(api));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const requestCountBeforeCreate = list.mock.calls.length;
+
+    await expect(
+      result.current.createBooking({ date: futureDate, time: '10:00' })
+    ).resolves.toBeNull();
+
+    // После конфликта список перечитан ещё раз...
+    await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(requestCountBeforeCreate));
+    // ...и чужая занятая запись попала в неё.
+    expect(result.current.bookings).toEqual([serverBooking]);
+    // Текст CREATE_ERROR при этом показан, а не затёрт перечитыванием.
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+  });
+
   it('запрашивает записи начиная с сегодняшнего дня', async () => {
     const list = vi.fn<(range: DateRange) => Promise<Booking[]>>(() => Promise.resolve([]));
     const api: BookingsApi = { list, create: () => Promise.reject(new Error('не вызывается')) };
