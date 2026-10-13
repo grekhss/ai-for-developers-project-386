@@ -336,3 +336,17 @@ none left. Assert on `disabled` for rule checks rather than on dates.
 `src/App.css`, `src/index.css`, `src/assets/`, and `public/icons.svg` were dead
 Vite-starter leftovers and have since been deleted — don't reintroduce them, and
 don't assume any CSS beyond Mantine's stylesheets.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`grekhss/ai-for-developers-project-386`), driven by the `gh` CLI. See `docs/agents/issue-tracker.md` (at the git repo root).
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its role name. See `docs/agents/triage-labels.md` (at the git repo root).
+
+### Domain docs
+
+Single-context — one `GLOSSARY.md` + `docs/adr/` at the git repo root. See `docs/agents/domain.md` (at the git repo root).
