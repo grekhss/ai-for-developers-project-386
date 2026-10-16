@@ -33,7 +33,7 @@ slot for a meeting of a chosen type.
 _Avoid_: visitor, client, user
 
 **Booker**:
-The self-declared name attached to a booking. It is not an identity and carries
+The self-declared name attached to a meeting. It is not an identity and carries
 no rights.
 _Avoid_: owner, user, account
 
@@ -45,7 +45,7 @@ _Avoid_: logged in, authorized
 Describes a request or viewer with no session.
 _Avoid_: visitor, public
 
-## Booking
+## Meetings
 
 **Meeting type**:
 A named category of meeting, with a description, that a guest may choose when
