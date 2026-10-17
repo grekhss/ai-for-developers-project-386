@@ -1,34 +1,34 @@
 import { useState } from 'react';
 import { Container, Title, Text, Card } from '@mantine/core';
-import BookingModal from './components/BookingModal.tsx';
+import MeetingModal from './components/MeetingModal.tsx';
 import MeetingCalendar from './components/MeetingCalendar.tsx';
-import { useBookings } from './hooks/useBookings.ts';
-import { bookingsApi, type BookingsApi } from './lib/bookings/api.ts';
-import type { BookingDraft } from './lib/bookings/types.ts';
+import { useMeetings } from './hooks/useMeetings.ts';
+import { meetingsApi, type MeetingsApi } from './lib/meetings/api.ts';
+import type { MeetingDraft } from './lib/meetings/types.ts';
 import { formatDateRu } from './lib/date.ts';
 
 interface AppProps {
   /** Подменяется в тестах, чтобы не делить записи между сценариями. */
-  api?: BookingsApi;
+  api?: MeetingsApi;
 }
 
-export default function App({ api = bookingsApi }: AppProps) {
+export default function App({ api = meetingsApi }: AppProps) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [time, setTime] = useState<string | null>(null);
-  const [lastBooked, setLastBooked] = useState<BookingDraft | null>(null);
-  const { bookings, loading, error, createBooking } = useBookings(api);
+  const [lastBooked, setLastBooked] = useState<MeetingDraft | null>(null);
+  const { meetings, loading, error, createMeeting } = useMeetings(api);
 
-  const takenTimes = bookings
-    .filter((booking) => booking.date === selectedDate)
-    .map((booking) => booking.time);
+  const takenTimes = meetings
+    .filter((meeting) => meeting.date === selectedDate)
+    .map((meeting) => meeting.time);
 
   function closeModal() {
     setSelectedDate(null);
     setTime(null);
   }
 
-  async function handleBook(draft: BookingDraft) {
-    const created = await createBooking(draft);
+  async function handleBook(draft: MeetingDraft) {
+    const created = await createMeeting(draft);
     // Строка «Запись: …» — только при успехе: иначе при ошибке создания
     // под календарём висели бы и красная ошибка, и синяя запись.
     if (created !== null) setLastBooked(draft);
@@ -72,7 +72,7 @@ export default function App({ api = bookingsApi }: AppProps) {
         )}
       </Card>
 
-      <BookingModal
+      <MeetingModal
         date={selectedDate}
         takenTimes={takenTimes}
         time={time}

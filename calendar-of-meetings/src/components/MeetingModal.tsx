@@ -1,13 +1,13 @@
 import { Button, Group, Modal, Text } from '@mantine/core';
 import { TimeGrid } from '@mantine/dates';
-import type { BookingDraft } from '../lib/bookings/types.ts';
+import type { MeetingDraft } from '../lib/meetings/types.ts';
 import { formatDateRu } from '../lib/date.ts';
 import { generateTimeSlots } from '../lib/slots.ts';
 
 /** Слоты рабочего дня не зависят от состояния, поэтому считаются один раз. */
 const SLOTS = generateTimeSlots();
 
-interface BookingModalProps {
+interface MeetingModalProps {
   /** День, для которого выбирается слот; `null` — окно закрыто. */
   date: string | null;
   /** Слоты этого дня, уже занятые другими записями, 'HH:mm'. */
@@ -15,12 +15,12 @@ interface BookingModalProps {
   /** Выбранный слот, 'HH:mm'. */
   time: string | null;
   onChangeTime: (time: string | null) => void;
-  onBook: (draft: BookingDraft) => void;
+  onBook: (draft: MeetingDraft) => void;
   onClose: () => void;
 }
 
 /** Собирает запись только если выбраны и день, и слот. */
-function toDraft(date: string | null, time: string | null): BookingDraft | null {
+function toDraft(date: string | null, time: string | null): MeetingDraft | null {
   return date !== null && time !== null ? { date, time } : null;
 }
 
@@ -29,14 +29,14 @@ function toDraft(date: string | null, time: string | null): BookingDraft | null 
  * можно сбросить в обработчике клика по дате, и не нужен remount по `key` ради
  * сброса состояния.
  */
-export default function BookingModal({
+export default function MeetingModal({
   date,
   takenTimes,
   time,
   onChangeTime,
   onBook,
   onClose,
-}: BookingModalProps) {
+}: MeetingModalProps) {
   const draft = toDraft(date, time);
 
   return (

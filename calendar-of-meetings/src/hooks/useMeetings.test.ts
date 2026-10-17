@@ -1,67 +1,67 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import dayjs from 'dayjs';
-import { useBookings } from './useBookings.ts';
-import { createInMemoryBookingsApi } from '../lib/bookings/inMemory.ts';
-import type { BookingsApi } from '../lib/bookings/api.ts';
-import type { Booking, DateRange } from '../lib/bookings/types.ts';
+import { useMeetings } from './useMeetings.ts';
+import { createInMemoryMeetingsApi } from '../lib/meetings/inMemory.ts';
+import type { MeetingsApi } from '../lib/meetings/api.ts';
+import type { Meeting, DateRange } from '../lib/meetings/types.ts';
 import { today } from '../lib/date.ts';
 
 /** Дата внутри горизонта, который запрашивает хук. */
 const futureDate = dayjs().add(7, 'day').format('YYYY-MM-DD');
 
-function fakeApi(bookings: Booking[] = []): BookingsApi {
-  return createInMemoryBookingsApi(bookings);
+function fakeApi(meetings: Meeting[] = []): MeetingsApi {
+  return createInMemoryMeetingsApi(meetings);
 }
 
-function failingApi(): BookingsApi {
+function failingApi(): MeetingsApi {
   return {
     list: () => Promise.reject(new Error('нет связи')),
     create: () => Promise.reject(new Error('нет связи')),
   };
 }
 
-describe('useBookings', () => {
+describe('useMeetings', () => {
   it('загружает записи и снимает флаг загрузки', async () => {
     const api = fakeApi([{ id: '1', date: futureDate, time: '10:00' }]);
 
-    const { result } = renderHook(() => useBookings(api));
+    const { result } = renderHook(() => useMeetings(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.bookings).toEqual([{ id: '1', date: futureDate, time: '10:00' }]);
+    expect(result.current.meetings).toEqual([{ id: '1', date: futureDate, time: '10:00' }]);
     expect(result.current.error).toBeNull();
   });
 
   it('сообщает об ошибке загрузки и не бросает её наружу', async () => {
-    const { result } = renderHook(() => useBookings(failingApi()));
+    const { result } = renderHook(() => useMeetings(failingApi()));
 
     await waitFor(() => expect(result.current.error).not.toBeNull());
 
     expect(result.current.loading).toBe(false);
-    expect(result.current.bookings).toEqual([]);
+    expect(result.current.meetings).toEqual([]);
   });
 
   it('добавляет запись и перечитывает список', async () => {
     const api = fakeApi();
-    const { result } = renderHook(() => useBookings(api));
+    const { result } = renderHook(() => useMeetings(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    const created = await result.current.createBooking({ date: futureDate, time: '11:00' });
+    const created = await result.current.createMeeting({ date: futureDate, time: '11:00' });
 
-    await waitFor(() => expect(result.current.bookings).toHaveLength(1));
+    await waitFor(() => expect(result.current.meetings).toHaveLength(1));
 
     expect(created).toMatchObject({ date: futureDate, time: '11:00' });
-    expect(result.current.bookings[0]).toMatchObject({ date: futureDate, time: '11:00' });
+    expect(result.current.meetings[0]).toMatchObject({ date: futureDate, time: '11:00' });
     expect(result.current.error).toBeNull();
   });
 
   it('кладёт ошибку создания в error, а не бросает из обработчика', async () => {
-    const { result } = renderHook(() => useBookings(failingApi()));
+    const { result } = renderHook(() => useMeetings(failingApi()));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     await expect(
-      result.current.createBooking({ date: futureDate, time: '11:00' })
+      result.current.createMeeting({ date: futureDate, time: '11:00' })
     ).resolves.toBeNull();
 
     expect(result.current.error).not.toBeNull();
@@ -70,36 +70,36 @@ describe('useBookings', () => {
   it('после конфликта список перечитан и ошибка показана', async () => {
     // Запись «с сервера», которой нет в локальном состоянии хука: лица,
     // попадающие в список только после перечитывания.
-    const serverBooking: Booking = { id: '1', date: futureDate, time: '10:00' };
-    const list = vi.fn<() => Promise<Booking[]>>(() => Promise.resolve([serverBooking]));
-    const api: BookingsApi = {
+    const serverMeeting: Meeting = { id: '1', date: futureDate, time: '10:00' };
+    const list = vi.fn<() => Promise<Meeting[]>>(() => Promise.resolve([serverMeeting]));
+    const api: MeetingsApi = {
       list,
       // Симулируем 409 сервера: create отклоняется, запись не добавляется.
       create: () => Promise.reject(new Error('дубль слота')),
     };
 
-    const { result } = renderHook(() => useBookings(api));
+    const { result } = renderHook(() => useMeetings(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     const requestCountBeforeCreate = list.mock.calls.length;
 
     await expect(
-      result.current.createBooking({ date: futureDate, time: '10:00' })
+      result.current.createMeeting({ date: futureDate, time: '10:00' })
     ).resolves.toBeNull();
 
     // После конфликта список перечитан ещё раз...
     await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(requestCountBeforeCreate));
     // ...и чужая занятая запись попала в неё.
-    expect(result.current.bookings).toEqual([serverBooking]);
+    expect(result.current.meetings).toEqual([serverMeeting]);
     // Текст CREATE_ERROR при этом показан, а не затёрт перечитыванием.
     await waitFor(() => expect(result.current.error).not.toBeNull());
   });
 
   it('запрашивает записи начиная с сегодняшнего дня', async () => {
-    const list = vi.fn<(range: DateRange) => Promise<Booking[]>>(() => Promise.resolve([]));
-    const api: BookingsApi = { list, create: () => Promise.reject(new Error('не вызывается')) };
+    const list = vi.fn<(range: DateRange) => Promise<Meeting[]>>(() => Promise.resolve([]));
+    const api: MeetingsApi = { list, create: () => Promise.reject(new Error('не вызывается')) };
 
-    renderHook(() => useBookings(api));
+    renderHook(() => useMeetings(api));
 
     await waitFor(() => expect(list).toHaveBeenCalled());
 

@@ -4,14 +4,14 @@ import userEvent from '@testing-library/user-event';
 import { MantineProvider } from '@mantine/core';
 import { DatesProvider } from '@mantine/dates';
 import App from './App.tsx';
-import { createInMemoryBookingsApi } from './lib/bookings/inMemory.ts';
-import type { BookingsApi } from './lib/bookings/api.ts';
+import { createInMemoryMeetingsApi } from './lib/meetings/inMemory.ts';
+import type { MeetingsApi } from './lib/meetings/api.ts';
 import { APP_LOCALE } from './lib/date.ts';
 
 const DATES_SETTINGS = { locale: APP_LOCALE };
 
 /** `create` всегда падает — для проверки неудачной записи. */
-function failingApi(): BookingsApi {
+function failingApi(): MeetingsApi {
   return {
     list: () => Promise.resolve([]),
     create: () => Promise.reject(new Error('нет связи')),
@@ -20,7 +20,7 @@ function failingApi(): BookingsApi {
 
 // Своё хранилище на каждый тест (значение по умолчанию): записи не должны
 // утекать между сценариями.
-function renderApp(api: BookingsApi = createInMemoryBookingsApi()) {
+function renderApp(api: MeetingsApi = createInMemoryMeetingsApi()) {
   const view = render(
     <MantineProvider defaultColorScheme="dark">
       <DatesProvider settings={DATES_SETTINGS}>
