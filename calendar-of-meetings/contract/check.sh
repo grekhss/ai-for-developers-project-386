@@ -23,6 +23,8 @@ npx openapi-typescript "$tmp/@typespec/openapi3/openapi.yaml" -o "$tmp/contract.
 API_GEN_OUT="$tmp/api-gen" npx openapi-ts >/dev/null
 
 diff -u contract/openapi.yaml "$tmp/@typespec/openapi3/openapi.yaml"
+diff -u contract/schema/calendar-of-meetings.json \
+  "$tmp/@typespec/json-schema/calendar-of-meetings"
 diff -u src/lib/contract.gen.ts "$tmp/contract.gen.ts"
 diff -u server/contract.gen.ts "$tmp/contract.gen.ts"
 diff -ru src/lib/api-gen "$tmp/api-gen"

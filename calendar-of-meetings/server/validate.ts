@@ -1,42 +1,93 @@
-import type { components } from './contract.gen.js';
-import type { MeetingDraft } from './types.js';
-
-/** Данные входа — тип приходит из контракта (contract/main.tsp, K1). */
-export type LoginInput = components['schemas']['LoginInput'];
-
-/** Формат даты: '2026-10-10'. */
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-/** Строгое время суток: '09:00', '23:59'; '9:00' и '24:00' уже не проходят. */
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+// Импорт — именованный, и это не стилистика: у ajv 8.20 нет `exports`-карты и
+// `type: module`, файлы CommonJS, а `.d.ts` написан как ES-модуль. В `nodenext`
+// дефолтный импорт отдаёт тип модульного namespace — `new Ajv2020(...)` тогда
+// не компилируется (TS2351), хотя в рантайме Node и подставляет класс. Имя
+// `Ajv2020` есть и в `.d.ts`, и в `module.exports`, так что только оно совпадает
+// в типах и в рантайме. Путь обязан быть полным, с `.js`, — иначе TS2307.
+import { Ajv2020 } from 'ajv/dist/2020.js';
+import type { CreateMeetingBody, ListMeetingsQuery, LoginInput } from './types.js';
 
 /**
- * Сервер валидирует только формат, не домен: прошедшие даты, выходные и время
- * вне сетки слотов принимаются. Домен не дублируется с src/lib (ARCHITECTURE
- * §3/§9), а импорт из src/ закрыт rootDir: server.
+ * Форматная валидация по схемам контракта (K4, ADR-0005).
  *
+ * Схемы приходят из contract/schema/ — той же компиляции contract/main.tsp, что
+ * генерирует спеку (npm run contract), поэтому правило формата живёт в одном
+ * месте и не дублируется здесь руками. Эмиттер отдаёт draft 2020-12 — отсюда
+ * ajv/dist/2020.
+ *
+ * Граница прежняя: сервер валидирует формат, не домен — прошедшие даты, выходные
+ * и сетка слотов остаются фронтовой политикой (ARCHITECTURE §3/§9), а импорт из
+ * src/ закрыт rootDir: server. Условие «для гостя обязателен bookerName» — про
+ * роль, не про формат, JSON Schema его не выразит: оно рукописное в routes.ts.
+ *
+ * ajv работает предикатом: coerceTypes/useDefaults/removeAdditional выключены,
+ * так что валидатор данные не трогает и ничего не додумывает.
+ */
+
+/**
+ * Путь — от файла validate.js, а не от cwd: и в dev (server/), и в проде
+ * (dist-server/) верхний каталог — корень пакета, где лежит contract/schema.
+ */
+const SCHEMA_PATH = join(
+  import.meta.dirname,
+  '..',
+  'contract',
+  'schema',
+  'calendar-of-meetings.json',
+);
+
+const { $defs: defs } = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as {
+  $defs: Record<string, object>;
+};
+
+const ajv = new Ajv2020({ strict: true });
+
+/**
+ * Схема модели из бандла. Отсутствие — ошибка компоновки, а не «пустой проход»:
+ * лучше упасть при загрузке модуля, чем молча пропустить невалидное тело.
+ */
+function schemaOf(model: string): object {
+  const schema = defs[model];
+  if (schema === undefined) {
+    throw new Error(`в contract/schema нет схемы модели ${model}`);
+  }
+  return schema;
+}
+
+const validDraft = ajv.compile<CreateMeetingBody>(schemaOf('MeetingDraft'));
+const validRange = ajv.compile<ListMeetingsQuery>(schemaOf('DateRange'));
+const validLogin = ajv.compile<LoginInput>(schemaOf('LoginInput'));
+
+/**
  * false на undefined/не-объекте: в Express 5 req.body не инициализируется в {},
  * если парсер не сработал (например, POST без Content-Type: application/json).
+ *
+ * Проверка стоит ДО ajv и по требованию K4, но как единственный гарант она не
+ * нужна: ajv на схемах `type: object` возвращает false для undefined/null/
+ * массива/строки/числа и не бросает (проверено). Она тут, чтобы это не зависело
+ * от внутренностей ajv и от того, что схема останется object-типом.
  */
-export function isValidDraft(body: unknown): body is MeetingDraft {
-  if (typeof body !== 'object' || body === null) return false;
-  const draft = body as Record<string, unknown>;
-  return (
-    typeof draft.date === 'string' &&
-    DATE_RE.test(draft.date) &&
-    typeof draft.time === 'string' &&
-    TIME_RE.test(draft.time)
-  );
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+/** Тело POST /api/meetings: дата 'YYYY-MM-DD', время 'HH:mm', бронирующий непуст. */
+export function isValidDraft(body: unknown): body is CreateMeetingBody {
+  return isObject(body) && validDraft(body);
 }
 
-/** Валидация query GET /api/meetings: from и to обязательны и в формате даты. */
-export function isValidRange(query: Record<string, unknown>): query is { from: string; to: string } {
-  const { from, to } = query;
-  return typeof from === 'string' && typeof to === 'string' && DATE_RE.test(from) && DATE_RE.test(to);
+/**
+ * Query GET /api/meetings: from и to обязательны и в формате даты. DateRange в
+ * контракте — та же пара from/to, объявленная там же, где и query-параметры, и
+ * с теми же @pattern; лишние query-параметры, как и раньше, игнорируются
+ * (эмиттер не запечатывает объекты — seal-object-schemas выключен).
+ */
+export function isValidRange(query: unknown): query is ListMeetingsQuery {
+  return isObject(query) && validRange(query);
 }
 
+/** Вход: пароль непуст (минимум один непробельный символ), bookerName — строка, если передан. */
 export function isValidLogin(body: unknown): body is LoginInput {
-  if (typeof body !== 'object' || body === null) return false;
-  const input = body as Record<string, unknown>;
-  if (typeof input.password !== 'string' || input.password.trim() === '') return false;
-  return input.bookerName === undefined || typeof input.bookerName === 'string';
+  return isObject(body) && validLogin(body);
 }

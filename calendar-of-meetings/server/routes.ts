@@ -2,16 +2,30 @@ import express from 'express';
 import { DuplicateMeetingError, type MeetingsRepository } from './repository.js';
 import type { AppOptions } from './app.js';
 import { requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
+import type { CreateMeetingBody, ListMeetingsQuery, LoginInput } from './types.js';
 import { isValidDraft, isValidLogin, isValidRange } from './validate.js';
 
 type AuthOptions = Pick<AppOptions, 'adminPassword' | 'guestPassword' | 'secureCookie'>;
+
+/**
+ * Тело и query обработчиков берутся из operations контракта, а не из выражения:
+ * смена shape'а в contract/main.tsp роняет `tsc` здесь, а не вылезает в 400.
+ * Типы — обещание для компилятора, фактическую проверку делают isValid*-предикаты
+ * ниже: в Express 5 req.body может и не быть (парсер не сработал), поэтому без
+ * них строка с типом врала бы о рантайме.
+ *
+ * Пути все статичные, path-параметров нет. ResBody остаётся unknown: ответы
+ * различаются по статус-коду (200/201/204 против 400/401/409), и свести их в
+ * одну типизированную сумму дороже, чем она стоит.
+ */
+type NoParams = Record<string, string>;
 
 /** Роуты API броней. Фабрика: принимает репозиторий, чтобы тесты подавали ':memory:'. */
 export function createRoutes(repo: MeetingsRepository, auth: AuthOptions): express.Router {
   const router = express.Router();
   const cookie = { ...sessionCookieOptions(), secure: auth.secureCookie };
 
-  router.post('/api/login', (req, res) => {
+  router.post<NoParams, unknown, LoginInput>('/api/login', (req, res) => {
     if (!isValidLogin(req.body)) {
       res.status(400).json({ error: 'password обязателен, bookerName — непустая строка' });
       return;
@@ -57,17 +71,19 @@ export function createRoutes(repo: MeetingsRepository, auth: AuthOptions): expre
     res.status(204).end();
   });
 
-  router.get('/api/meetings', (req, res) => {
-    const query = req.query as Record<string, unknown>;
-    if (!isValidRange(query)) {
+  router.get<NoParams, unknown, never, ListMeetingsQuery>('/api/meetings', (req, res) => {
+    // req.query типизирован как ListMeetingsQuery по контракту, но рантайм это
+    // всё ещё строки из URL: повторённый параметр приходит массивом, поэтому
+    // предикат обязателен — он и роняет формат, и сужает для repo.list.
+    if (!isValidRange(req.query)) {
       // Без этой проверки better-sqlite3 упал бы с 500 «too few parameter values».
       res.status(400).json({ error: 'from и to обязательны, формат YYYY-MM-DD' });
       return;
     }
-    res.json(repo.list(query.from, query.to));
+    res.json(repo.list(req.query.from, req.query.to));
   });
 
-  router.post('/api/meetings', (req, res) => {
+  router.post<NoParams, unknown, CreateMeetingBody>('/api/meetings', (req, res) => {
     if (!isValidDraft(req.body)) {
       res.status(400).json({ error: 'date и time обязательны, формат time HH:mm' });
       return;

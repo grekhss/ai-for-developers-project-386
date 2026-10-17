@@ -203,8 +203,23 @@ Overflow answers, and your own priors. Verified against
   `src/lib/contract.gen.ts` и `server/contract.gen.ts` — **сгенерированные артефакты**:
   руками их не правят, правка идёт в `.tsp` и приезжает через `npm run contract`.
 - **Контракт описывает формат и схему, не домен.** Прошедшие даты, выходные и сетка
-  слотов остаются фронтовой политикой; `server/validate.ts` валидирует только формат
-  и остаётся ручным — `@pattern` в контракте лишь зеркалит его `DATE_RE`/`TIME_RE`.
+  слотов остаются фронтовой политикой; `server/validate.ts` валидирует формат по сгенерированным
+  схемам через `ajv` (булев предикат, K4) — руками в нём остаётся только то, что JSON Schema
+  не выразит: обёртка `req.body === undefined` (в Express 5 парсер может не сработать) и
+  роль-зависимое «для гостя обязателен `bookerName`» в `routes.ts`. Русские тексты ошибок — в роутах.
+- **Схемы в `contract/schema/` — артефакт той же компиляции, что и спека.** Эмиттер
+  `@typespec/json-schema@~1.11.0` в `tspconfig.yaml` даёт один бандл (`bundleId`) в формате
+  JSON Schema **draft 2020-12**, поэтому сервер собирает `ajv` из `ajv/dist/2020`. Две ловушки:
+  (1) `seal-object-schemas` оставлен выключенным — `additionalProperties` не появляется и лишние
+  поля по-прежнему разрешены, как и в ручном валидаторе; включать его — отдельное решение,
+  меняющее поведение; (2) `bundleId` задаёт имя файла без расширения, а `generate.sh` переносит
+  его в `contract/schema/calendar-of-meetings.json` — сервер читает его по пути от `import.meta.dirname`,
+  что верно и в dev (`server/`), и в проде (`dist-server/`).
+- **Импорт `ajv` — именованный, и это не стилистика.** У `ajv` 8.20 нет `exports`-карты и
+  `type: module`, файлы CommonJS, а `.d.ts` написан как ES-модуль. В `nodenext` дефолтный импорт
+  даёт тип модульного namespace, и `new Ajv2020(...)` не компилируется (TS2351), хотя в рантайме
+  Node подставляет класс. Работает только `import { Ajv2020 } from 'ajv/dist/2020.js'` — имя есть
+  и в типах, и в `module.exports`; путь обязан быть полным, с `.js` (иначе TS2307).
 - **Две копии генерата, а не одна общая**: сервер не может импортировать из `src/`
   (`rootDir: server`), поэтому `openapi-typescript` зовётся дважды; идентичность копий
   фиксирует `server/contract.test.ts`.
@@ -220,12 +235,12 @@ Overflow answers, and your own priors. Verified against
 - **`contract:check` (в `check`) ловит дрейф**: генерирует во временный каталог и делает
   `diff` с закоммиченными артефактами. Правил `.tsp` — сначала `npm run contract`, потом
   гейт; ручная правка `.gen.ts`/`openapi.yaml` гейт роняет.
-- **`npm run contract` — единая самопроверяющаяся команда** (D5/ADR-0005): генерирует спеку
-  и обе TS-копии, а в конце зовёт `contract/check.sh`, который то же самое перегенерирует во
+- **`npm run contract` — единая самопроверяющаяся команда** (D5/ADR-0005): генерирует спеку, обе TS-копии
+  и серверные схемы, а в конце зовёт `contract/check.sh`, который то же самое перегенерирует во
   временный каталог и сверит — так успешный прогон гарантирует и свежесть, и детерминизм.
   Скрипта `contract:types` больше нет: ступени живут в `contract/generate.sh`. Новый
-  генератор (следующий — JSON Schema, K4) добавляется ступенью в `generate.sh`
-  **и** диффом в `check.sh` — иначе он не попадёт в самопроверку.
+  генератор добавляется ступенью в `generate.sh` **и** диффом в `check.sh` — иначе он
+  не попадёт в самопроверку (так K4 добавил JSON Schema для сервера).
 - **Клиентский SDK — ступень `npx openapi-ts` по `openapi-ts.config.ts`** (K3,
   `@hey-api/openapi-ts@0.95.0`, закреплён точно; рантайм `@hey-api/client-fetch`
   в `dependencies`). Каталог `src/lib/api-gen/` коммитится, как и остальные
@@ -248,8 +263,15 @@ Overflow answers, and your own priors. Verified against
   `/api/meeting-types/{id}/deactivate`, `/api/admin/meetings` — S3/S4): контракт намеренно
   идёт впереди сервера, чтобы SDK (K3) собрал их до реализации. Их статус-коды и присутствие
   держит `server/contract.test.ts`, который сверяет каждую операцию с обязательным набором кодов.
+- **`server/contract.test.ts` сверяет роуты со спекой** (K4): интроспектирует
+  `createRoutes(...).stack`, разворачивает Express-пути в форму OpenAPI (`:id` → `{id}`) и
+  сверяет пары «путь + метод» с разобранным `openapi.yaml` (dev-зависимость `yaml`). Направление —
+  **роуты ⊆ спека**: контракт идёт впереди, поэтому лишняя ручка в спеке допустима, а смонтированная
+  ручка вне спеки — нет. Тот же тест держит порядок слоёв: сеанс-гейт должен покрывать всё после
+  себя, а `POST /api/login` оставаться единственным открытым роутом.
 - **`tsp-output/`** — промежуточный выход `tsp compile`, в `.gitignore`; `npm run contract`
-  переносит спеку в `contract/openapi.yaml`.
+  переносит спеку в `contract/openapi.yaml`, а бандл схем — в
+  `contract/schema/calendar-of-meetings.json`.
 
 ## Conventions
 
@@ -321,9 +343,10 @@ calendar-of-meetings/
 ├── .npmrc                  # legacy-peer-deps=true — причина в «API-контракт (TypeSpec)»
 ├── contract/               # TypeSpec: единственный источник истины контракта API
 │   ├── main.tsp            # модели и ручки всего API (включая планируемые); правка только здесь
-│   ├── tspconfig.yaml      # emit @typespec/openapi3
+│   ├── tspconfig.yaml      # emit @typespec/openapi3 + @typespec/json-schema
 │   ├── generate.sh         # npm run contract: генерация всех семейств + самопроверка
 │   ├── check.sh            # contract:check: генерация во временный каталог + diff
+│   ├── schema/             # JSON Schema draft 2020-12 одним бандлом (артефакт, не править)
 │   └── openapi.yaml        # сгенерированная спека (коммитится, не править)
 ├── openapi-ts.config.ts    # клиентский SDK из спеки → src/lib/api-gen (K3; в tsconfig.node.json)
 ├── tsconfig.json           # project references only
@@ -341,10 +364,10 @@ calendar-of-meetings/
 │   ├── routes.ts           # GET/POST /api/meetings
 │   ├── repository.ts       # createRepository: list/create; UNIQUE → DuplicateMeetingError
 │   ├── db.ts               # createDatabase + defaultDbPath (data/meetings.sqlite)
-│   ├── validate.ts         # форматная валидация тела и query (не домен!)
+│   ├── validate.ts         # форматная валидация по схемам контракта через ajv (не домен!)
 │   ├── contract.gen.ts     # сгенерированные TS-типы контракта (не править)
-│   ├── types.ts            # alias'ы Meeting/MeetingDraft из contract.gen.ts
-│   ├── contract.test.ts    # @vitest-environment node: охранитель артефактов контракта
+│   ├── types.ts            # alias'ы Meeting/MeetingDraft + тела/параметры из operations
+│   ├── contract.test.ts    # @vitest-environment node: артефакты контракта + сверка роутов со спекой
 │   ├── repository.test.ts  # @vitest-environment node
 │   └── routes.test.ts      # интеграция: createApp(':memory:') + listen(0) + fetch
 └── src/
