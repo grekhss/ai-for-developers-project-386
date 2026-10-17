@@ -2,12 +2,17 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
+import { createRoutes } from './routes.js';
+import { createRepository } from './repository.js';
+import { createDatabase } from './db.js';
 
-// Охранитель артефактов контракта (K1, ADR-0004; статус-коды — K2, D5): спека
-// и обе TS-копии закоммичены, содержат все операции API, их реальные статус-коды
-// и не пусты. Дрейф относительно contract/main.tsp ловит contract:check (входит в
-// npm run check); этот тест — дешёвая страховка на случай удалённых артефактов и
-// отражённой в спеке лжи о кодах, которую сервер возвращает иначе.
+// Охранитель артефактов контракта (K1, ADR-0004; статус-коды — K2, D5; сверка
+// роутов со спекой — K4): спека и обе TS-копии закоммичены, содержат все
+// операции API, их реальные статус-коды и не пусты, а смонтированные сервером
+// роуты не выходят за пределы спеки. Дрейф относительно contract/main.tsp ловит
+// contract:check (входит в npm run check); этот тест — дешёвая страховка на
+// случай удалённых артефактов, лжи о кодах и забытой в роутах ручки.
 
 const read = (relativePath: string): string =>
   readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8');
@@ -15,6 +20,9 @@ const read = (relativePath: string): string =>
 const spec = read('../contract/openapi.yaml');
 const frontGen = read('../src/lib/contract.gen.ts');
 const serverGen = read('./contract.gen.ts');
+
+/** Express-путь в форму OpenAPI: '/api/meeting-types/:id' → '/api/meeting-types/{id}'. */
+const toOpenApiPath = (path: string): string => path.replace(/:([^/]+)/g, '{$1}');
 
 /**
  * Все ручки API — их набор живёт в contract/main.tsp. Четыре последних описаны
@@ -81,6 +89,69 @@ const operationBlock = (operation: string): string => {
   return rest.slice(0, ends.length === 0 ? rest.length : Math.min(...ends));
 };
 
+/** Разобранный openapi.yaml: спека — источник истины о путях и методах. */
+type OpenApiDocument = {
+  paths: Record<string, Record<string, { operationId?: string }>>;
+};
+
+/**
+ * Роуты, реально смонтированные createRoutes, — пары «путь + метод», плюс те,
+ * что смонтированы ДО сеанс-гейта и потому работают без сессии.
+ *
+ * Интроспекция router.stack, а не список вручную: забытую в списке строку ничто
+ * бы не заметило, а stack — то, что сервер действительно отдаёт. Методы 'all' и
+ * '_all' отбрасываем (Express сам разворачивает router.all в них, а в спеке это
+ * «все методы», а не отдельный). Пути разворачиваются в форму OpenAPI:
+ * '/api/meeting-types/:id' → '/api/meeting-types/{id}'.
+ */
+type MountedRoute = { path: string; method: string };
+
+function inspectRoutes(): { routes: MountedRoute[]; unguardedRoutes: MountedRoute[] } {
+  const db = createDatabase(':memory:');
+  try {
+    const router = createRoutes(createRepository(db), {
+      adminPassword: 'admin-secret',
+      guestPassword: 'guest-secret',
+      secureCookie: false,
+    });
+
+    const routes: MountedRoute[] = [];
+    const unguardedRoutes: MountedRoute[] = [];
+    let guarded = false;
+
+    for (const layer of router.stack as Array<{
+      name: string;
+      route?: { path: string; methods: Record<string, boolean> };
+    }>) {
+      // Порядок слоёв решает: router.use('/api', requireSession) защищает только
+      // то, что смонтировано ПОСЛЕ него, — раньше лежит открытый /api/login.
+      if (layer.route === undefined) {
+        guarded = true;
+        continue;
+      }
+
+      const path = toOpenApiPath(layer.route.path);
+      for (const [method, enabled] of Object.entries(layer.route.methods)) {
+        if (!enabled || method === 'all' || method === '_all') continue;
+        const route = { path, method };
+        routes.push(route);
+        if (!guarded) unguardedRoutes.push(route);
+      }
+    }
+
+    return { routes, unguardedRoutes };
+  } finally {
+    db.close();
+  }
+}
+
+/** Пары «путь + метод», задокументированные в спеке. */
+function specRoutes(document: OpenApiDocument): MountedRoute[] {
+  return Object.entries(document.paths).flatMap(([path, methods]) =>
+    Object.keys(methods).map((method) => ({ path, method })),
+  );
+}
+
 describe('артефакты контракта API', () => {
   it('openapi.yaml содержит все путь-операции API', () => {
     for (const path of PATHS) {
@@ -114,5 +185,45 @@ describe('артефакты контракта API', () => {
 
   it('фронтовая и серверная копии идентичны — генерация одна на обе', () => {
     expect(frontGen).toBe(serverGen);
+  });
+
+  it('каждый смонтированный роут описан в спеке, методы совпадают', () => {
+    const document = parse(spec) as OpenApiDocument;
+    const documented = specRoutes(document);
+    const { routes } = inspectRoutes();
+
+    // Спека может идти впереди сервера (S3/S4), поэтому проверяем только
+    // подмножество: роут есть — он обязан быть в спеке. Обратное неверно.
+    expect(routes.length).toBeGreaterThan(0);
+    for (const route of routes) {
+      expect(
+        documented,
+        `роут ${route.method.toUpperCase()} ${route.path} смонтирован, но в спеке его нет`,
+      ).toContainEqual(route);
+    }
+  });
+
+  it('спека не задокументирует ни одного неожиданного метода на путях сервера', () => {
+    const document = parse(spec) as OpenApiDocument;
+    const { routes } = inspectRoutes();
+    const mountedPaths = new Set(routes.map((route) => route.path));
+
+    for (const { path, method } of specRoutes(document)) {
+      if (!mountedPaths.has(path)) continue;
+      // Для смонтированного пути в спеке допустимы только методы, которые сервер
+      // реально отдаёт: лишний метод в спеке — это ложь о реализованном роуте.
+      expect(
+        routes,
+        `спека документирует ${method.toUpperCase()} ${path}, но сервер его не монтирует`,
+      ).toContainEqual({ path, method });
+    }
+  });
+
+  it('сеанс-гейт навешен на все ручки, кроме входа', () => {
+    const { unguardedRoutes } = inspectRoutes();
+    // Порядок в router.stack решает: что смонтировано до use-слоя с
+    // requireSession, работает без сессии. Вход — единственный такой роут.
+    // Убери гейт — и без сессии окажется всё API, тест рухнет на этом диффе.
+    expect(unguardedRoutes).toEqual([{ path: '/api/login', method: 'post' }]);
   });
 });

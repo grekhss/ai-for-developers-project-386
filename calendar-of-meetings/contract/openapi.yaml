@@ -329,7 +329,10 @@ components:
         password:
           type: string
           minLength: 1
-          description: Пароль — непустая строка.
+          pattern: \S
+          description: |-
+            Пароль — непустая строка, минимум один непробельный символ: `'   '` не
+            проходит, хотя с одним лишь `@minLength(1)` прошло бы.
         bookerName:
           type: string
           description: 'Имя гостя: для гостя обязательно (непустая строка), для админа игнорируется.'

@@ -41,7 +41,7 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App
         │                                                           в проде — тот же origin)
         │                                                          ▼
         └─► meetings ─► App.takenTimes ─► MeetingModal disableTime   express (server/):
-        │                                 validate (только формат) → repository → SQLite
+        │                                 validate (формат по схеме ajv) → repository → SQLite
         │                                                           (data/meetings.sqlite)
         └─► meetings / error / loading ─► строки статуса под календарём
 ```
@@ -92,12 +92,25 @@ Mantine, ни от его внутреннего устройства.
 ## 4. Контракты
 
 Контракт API **декларативный и единый**: `contract/main.tsp` (TypeSpec, K1/ADR-0004) —
-единственный источник истины. Из него генерируются `contract/openapi.yaml` и две
-TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`); `src/lib/meetings/types.ts`,
+единственный источник истины. Из него генерируются `contract/openapi.yaml`, две
+TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`) и JSON Schema
+(`contract/schema/calendar-of-meetings.json`, K4/ADR-0005); `src/lib/meetings/types.ts`,
 `server/types.ts`, `Session` и `LoginInput` — alias'ы на генерат, ручных дублей больше нет.
-Копии две, а не одна общая, потому что `rootDir: server` закрывает серверу импорт из
-`src/` (§3): копия лежит внутри `server/`, инвариант сохранён. Контракт описывает формат
-и схему, не домен — серверный `validate.ts` остаётся ручным (§7-3).
+Копии TS две, а не одна общая, потому что `rootDir: server` закрывает серверу импорт из
+`src/` (§3): копия лежит внутри `server/`, инвариант сохранён.
+
+Всё это генерирует **одна команда `npm run contract`**, которая в конце сама же перегенерирует
+артефакты во временный каталог и сверяет `diff` (`contract/check.sh`, входит в `npm run check`).
+Новый генератор обязан добавить ступень и в `contract/generate.sh`, и дифф в `check.sh` —
+иначе он выпадет из самопроверки.
+
+Валидация формы переехала в **`ajv`** (K4): сервер компилирует схемы из `contract/schema/`
+и прогоняет через них тело и query (`server/validate.ts`). Это булев предикат, а не резолвер —
+`coerceTypes`/`useDefaults`/`removeAdditional` выключены, поэтому валидатор данные не трогает
+и ничего не додумывает. Граница «формат vs роль» сохранена: `ajv` проверяет только формат,
+а условное «для гостя обязателен `bookerName`» (роль) и русские тексты ошибок остаются рукописными
+в `routes.ts` — JSON Schema роль не выражает. Схема — один бандл (`bundleId`), объекты не
+запечатаны (`seal-object-schemas` выключен), так что лишние поля по-прежнему разрешены.
 
 Ручки API (все `/api`, кроме входа, — за сессионной cookie `session`): `POST /login`
 (200/400/401), `POST /logout` (204/401), `GET /me` (200/401), `GET /meetings`
@@ -109,7 +122,12 @@ TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`); `src/lib/me
 `GET /api/admin/meetings` (S4). Контракт намеренно идёт впереди сервера, чтобы
 клиентский SDK (K3) собрал их до реализации. Каждую операцию со стороны спеки
 держит `server/contract.test.ts` (обязательный набор статус-кодов), а соответствие
-`.tsp` — `contract:check`.
+`.tsp` — `contract:check`. Тот же тест сверяет и **роуты со спекой**: интроспектирует
+`createRoutes(...).stack`, разворачивает Express-пути в форму OpenAPI (`:id` → `{id}`)
+и проверяет, что каждая смонтированная пара «путь + метод» описана в спеке. Направление —
+**роуты ⊆ спека**: контракт идёт впереди, поэтому лишняя ручка в спеке допустима (S3/S4),
+но смонтированная ручка вне спеки — нет. Там же проверяется порядок слоёв: сеанс-гейт
+должен покрывать всё после себя, а `POST /api/login` оставаться единственным открытым роутом.
 
 Все даты и времена — **строки**, не `Date`-объекты (`contract/main.tsp`, модель `Meeting`):
 
@@ -205,8 +223,10 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 | Задача | Что менять |
 | --- | --- |
 | Смена хранилища/формата на сервере | Весь сервер за `MeetingsApi` фронта: `meetingsApi` уже указывает на `createHttpMeetingsApi()` (`api.ts:19`); дальше трогается только `server/`. |
-| Новая ручка или поле API | `contract/main.tsp` + `npm run contract`: типы приезжают на обе стороны, `rootDir` не трогается, дрейф ловит `contract:check`. |
-| Доменная валидация на сервере (2-й клиент, публичный API) | Сейчас сервер проверяет только формат (§7-3). Правила (`isBookable`, сетка слотов) вынести в общий модуль и звать из `server/validate.ts`; UI продолжит пользоваться `lib/`. |
+| Новая ручка или поле API | `contract/main.tsp` + `npm run contract`: типы приезжают на обе стороны, схема пересобирается для `ajv`, `rootDir` не трогается, дрейф ловит `contract:check`. Роут вне спеки ловит `server/contract.test.ts`. |
+| Новое правило формата (поле, паттерн) | `contract/main.tsp` — правило обязано жить в контракте, а не только в серверном коде: валидация идёт по сгенерированной схеме через `ajv` (§4). Рукописной остаётся только то, что JSON Schema не выражает. |
+| Правило, зависящее от роли | `server/routes.ts` рядом с `ajv`-предикатом: схема формы роль не выразит (как `bookerName` для гостя). Не подмешивать домен — см. следующую строку. |
+| Доменная валидация на сервере (2-й клиент, публичный API) | Сейчас сервер проверяет только формат (§4). Правила (`isBookable`, сетка слотов) вынести в общий модуль и звать из `server/validate.ts`; UI продолжит пользоваться `lib/`. |
 | Праздники, дни без свободных слотов | `lib/date.ts:34` `isBookable`. |
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
 | Горизонт списка записей | `src/hooks/useMeetings.ts:11` `HORIZON_DAYS`. |
@@ -230,8 +250,10 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 2. **Горизонт 90 дней фиксирован и не связан с показанным месяцем.** Запись на
    4-й месяц вперёд не помечается занятым днём. Нужен `onMonthChange` в
    `MeetingCalendar` и диапазон из отображаемого месяца — правка хука и API.
-3. **Сервер валидирует только формат, не домен.** Прошедшие даты, выходные и
-   время вне сетки слотов принимаются. UI такие draft'ы не генерирует
+3. **Сервер валидирует формат, не домен.** Прошедшие даты, выходные и
+   время вне сетки слотов принимаются. Формат при этом проверяет `ajv` по
+   схеме из `contract/schema/` (§4), так что дыра только доменная. UI такие
+   draft'ы не генерирует
    (`excludeDate` в календаре, сетка `TimeGrid`, `disableTime` в модалке),
    поэтому дыра достижима только обходом UI; мусорные записи не показываются
    как занятые. При появлении второго клиента или публичного API — валидировать
@@ -239,9 +261,10 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-83 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 6, `useMeetings` 6,
+86 тестов: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 6, `useMeetings` 6,
 `MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 10,
-`routes` 19, `contract` 4 (охранитель артефактов и статус-кодов контракта). Фронтовые тесты
+`routes` 19, `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
+роутов со спекой и порядка сеанс-гейта). Фронтовые тесты
 колоцированы в `src/`, поэтому `tsc -b` проверяет их
 типы бесплатно; серверные проверяет `tsc -p tsconfig.server.json --noEmit`.
 
@@ -305,10 +328,15 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
       свой `api` (своё хранилище вместо модульного синглтона).
 - [ ] `server/` не импортирует из `src/` (`rootDir: server`); импорты внутри —
       с `.js`-суффиксом (nodenext).
-- [ ] `.gen.ts`, `contract/openapi.yaml` и `src/lib/api-gen/` не правятся руками:
-      правка идёт в `contract/main.tsp`, затем `npm run contract`; дрейф роняет
-      `contract:check` (входит в `npm run check`).
-- [ ] Сервер не дублирует доменные правила: только формат (§7-3), константы
+- [ ] `.gen.ts`, `contract/openapi.yaml`, `contract/schema/` и `src/lib/api-gen/` не
+      правятся руками: правка идёт в `contract/main.tsp`, затем `npm run contract`;
+      дрейф роняет `contract:check` (входит в `npm run check`). Новый генератор
+      добавляется ступенью в `generate.sh` **и** диффом в `check.sh`.
+- [ ] Новый роут описан в `contract/main.tsp` и смонтирован в том же порядке слоёв:
+      роут вне спеки или открытый мимо сеанс-гейта роняет `server/contract.test.ts`.
+- [ ] Форматное правило живёт в контракте, а не только в `server/`: валидация идёт
+      по сгенерированной схеме через `ajv` (§4).
+- [ ] Сервер не дублирует доменные правила: только формат (§4), константы
       слотов в `server/` не заводим.
 - [ ] Каждый новый тест проверен мутацией.
 - [ ] Пользовательский текст и комментарии — по-русски, `import type` для
@@ -320,7 +348,7 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
 ```bash
 npm run check   # contract:check && oxlint && tsc -b && tsc -p tsconfig.server.json --noEmit && vitest run
 npm run build   # npm run contract && tsc -b && vite build && tsc -p tsconfig.server.build.json — dist/ и dist-server/
-npm run contract  # generate.sh: спека + TS-копии + самопроверка дрейфа (после правки контракта; нужен и перед build)
+npm run contract  # generate.sh: спека + TS-копии + JSON Schema + самопроверка дрейфа (после правки контракта; нужен и перед build)
 npm start       # node dist-server/index.js — только после build; API + статика из dist/
 npm run dev     # vite + сервер (concurrently); сервер отдельно — npm run dev:server
 npm run lint    # линтер отдельно

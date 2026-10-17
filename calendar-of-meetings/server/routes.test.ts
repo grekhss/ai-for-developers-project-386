@@ -128,7 +128,25 @@ describe('routes /api/auth', () => {
       { password: AUTH.guestPassword, bookerName: '' },
       { password: AUTH.guestPassword, bookerName: '   ' },
     ]) {
-      expect((await login(baseUrl, body)).status).toBe(400);
+      expect((await login(baseUrl, body)).status, `тело ${JSON.stringify(body)}`).toBe(400);
+    }
+  });
+
+  it('POST /api/login отклоняет тело, не проходящее формат пароля', async () => {
+    const { baseUrl } = await createTestApp();
+    // Отдельно от «неверного пароля» (401): это отказ ФОРМАТА, а не аутентикации.
+    // '   ' ловит регресс на @pattern("\\S") — раньше сервер резал trim() вручную,
+    // и правило могло уехать из схемы, оставшись только в routes.ts.
+    for (const body of [
+      { password: '   ' },
+      { password: 123 },
+      { password: AUTH.adminPassword, bookerName: 42 },
+    ]) {
+      const response = await login(baseUrl, body as never);
+      expect(response.status, `тело ${JSON.stringify(body)}`).toBe(400);
+      expect(await response.json()).toEqual({
+        error: 'password обязателен, bookerName — непустая строка',
+      });
     }
   });
 
@@ -284,17 +302,28 @@ describe('routes /api/meetings (за requireSession)', () => {
       { date: '02.03.2026', time: '09:00' },
       { date: '2026-03-02', time: '24:00' },
       { date: null, time: '09:00' },
+      { date: 20260302, time: '09:00' },
       'not an object',
     ];
 
     for (const body of invalidBodies) {
-      expect((await postMeeting(baseUrl, adminCookie, body)).status).toBe(400);
+      // `message` в expect — это контекст провала: без него Vitest не скажет,
+      // какое из тел не получил 400, и в цикле из семи это квест на угадывание.
+      expect((await postMeeting(baseUrl, adminCookie, body)).status, `тело ${JSON.stringify(body)}`).toBe(400);
     }
   });
 
   it('GET без from/to отвечает 400', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
     const response = await getMeetings(baseUrl, adminCookie, '');
+    expect(response.status).toBe(400);
+  });
+
+  it('GET с повторённым параметром отвечает 400', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    // Express 5 склеивает повтор в массив, а схема ждёт строку. Это отдельный
+    // сценарий от «пустого» query: без него регрессия на массивах не поймана.
+    const response = await getMeetings(baseUrl, adminCookie, '?from=2026-01-01&from=2026-01-02&to=2026-12-31');
     expect(response.status).toBe(400);
   });
 
