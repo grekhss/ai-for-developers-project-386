@@ -6,6 +6,8 @@ status: accepted
 
 Контракт API был продублирован руками: `src/lib/meetings/types.ts` на фронте и структурная копия в `server/types.ts` (+ `Session` в `server/session.ts`, `LoginInput` в `server/validate.ts`), а серверные правила формата жили отдельно в `server/validate.ts`. Решили сделать источником истины `contract/main.tsp` (TypeSpec 1.11.x) и **генерировать** из него `contract/openapi.yaml` и две TS-копии — `src/lib/contract.gen.ts` и `server/contract.gen.ts`; ручные .ts-типы стали alias'ами на генерат. Контракт описывает формат и схему, **не домен**: `server/validate.ts` остаётся ручным.
 
+> Toolchain-часть этого решения (генерируются только типы, клиент и `validate.ts` рукописные) уточнена и расширена в **ADR-0005**: генерируются и клиентский SDK, и серверные схемы, единой самопроверяющейся командой. Источник истины здесь остаётся в силе.
+
 ## Considered Options
 
 - **TypeSpec** — выбран: декларативный язык с генерацией языко-нейтральной OpenAPI-спеки; типы для обеих сторон из одного вызова.
