@@ -6,10 +6,11 @@
 
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
 
-Проверено на: 20 файлов в `src/`, 12 файлов в `server/`, 82 теста в 10 файлах,
-`npm run check` и `npm run build` зелёные. Стек: React 19, Mantine 9.6.3, dayjs,
-TypeScript 6 со `strict`, Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12,
-TypeSpec 1.11.
+Проверено на: 20 файлов в `src/` (плюс сгенерированные `src/lib/api-gen/`),
+12 файлов в `server/`, 83 теста в 10 файлах, `npm run check` и `npm run build`
+зелёные. Стек: React 19, Mantine 9.6.3, dayjs, TypeScript 6 со `strict`,
+Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
+клиентский SDK — `@hey-api/openapi-ts` 0.95.
 
 ## 1. Что это
 
@@ -45,8 +46,15 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App
         └─► meetings / error / loading ─► строки статуса под календарём
 ```
 
-Запросы формирует только `createHttpMeetingsApi` (`src/lib/meetings/http.ts`);
-за ними стоит поток «репозиторий → SQLite», описанный в §3. В dev `/api`
+Запросы формирует только `createHttpMeetingsApi` (`src/lib/meetings/http.ts`),
+и делает он это через сгенерированный клиентский SDK `src/lib/api-gen` (K3,
+D5). SDK собран из того же `contract/openapi.yaml` той же командой
+`npm run contract`, что и остальные артефакты контракта, поэтому путь, заголовки
+и тело не могут разойтись со спекой — дрейф ловит `contract:check`. Адаптер
+добавляет к вызовам SDK только то, что контракт не выражает: `credentials:
+'include'` (без него браузер не подложит session-cookie, D3) и прежние русские
+тексты ошибок; порт `MeetingsApi` и его сигнатуры не меняются. За запросами
+стоит поток «репозиторий → SQLite», описанный в §3. В dev `/api`
 проксируется Vite на :4000, в проде express отдаёт и API, и статику из `dist/`.
 
 Ключевое: **Mantine не протекает наружу `components/`.** Наружу отдаются
@@ -231,7 +239,7 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-82 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useMeetings` 6,
+83 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 6, `useMeetings` 6,
 `MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 10,
 `routes` 19, `contract` 4 (охранитель артефактов и статус-кодов контракта). Фронтовые тесты
 колоцированы в `src/`, поэтому `tsc -b` проверяет их
@@ -267,11 +275,23 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
 - **Интеграционный тест обязан передать свой `api`** (обычно
   `createInMemoryMeetingsApi()`, для неудачного создания — заглушку с падающим
   `create`) — см. раздел 5.
+- **jsdom не даёт своего `Request`**, глобальным остаётся node'овский (undici), а
+  он требует абсолютный URL — в браузере относительный резолвит `location`.
+  Поэтому SDK упал бы в `new Request('/api/…')`, не дойдя до fetch, и тесты
+  `http.test.ts` подставляют шим `BrowserRequest`, добавляющий ту же основу.
+  Это пробел окружения, а не поведение адаптера: прод использует пустой
+  `baseUrl` и браузерный резолвинг.
 
 Каждый новый тест проверен мутацией: `takenTimes={[]}` валит тест «занятый
 слот в следующий раз не выбирается», удаление `setLastBooked(draft)` из
 `handleBook` — три теста: два прежних и новый, на сброс строки. Это дешевле,
-чем потом отлаживать «зелёный, но ничего не проверяющий» тест.
+чем потом отлаживать «зелёный, но ничего не проверяющий» тест. Такая ловушка
+уже случалась: тест «create бросает при 400 и 409» проверял лишь `rejects.toThrow()`,
+и пока SDK не умел резолвить относительный URL, он проходил на постороннем
+`TypeError` из `new Request`. Теперь он сверяет русский текст ошибки. По той же
+схеме в K3: удаление `credentials: 'include'` валит тест cookie-сессии, замена
+русского текста — тест на 400/409, удаление прокидывания сетевого исключения —
+тест на «ошибка сети».
 
 ## 9. Чек-лист инвариантов для агента
 
@@ -285,9 +305,9 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
       свой `api` (своё хранилище вместо модульного синглтона).
 - [ ] `server/` не импортирует из `src/` (`rootDir: server`); импорты внутри —
       с `.js`-суффиксом (nodenext).
-- [ ] `.gen.ts` и `contract/openapi.yaml` не правятся руками: правка идёт в
-      `contract/main.tsp`, затем `npm run contract`; дрейф роняет `contract:check`
-      (входит в `npm run check`).
+- [ ] `.gen.ts`, `contract/openapi.yaml` и `src/lib/api-gen/` не правятся руками:
+      правка идёт в `contract/main.tsp`, затем `npm run contract`; дрейф роняет
+      `contract:check` (входит в `npm run check`).
 - [ ] Сервер не дублирует доменные правила: только формат (§7-3), константы
       слотов в `server/` не заводим.
 - [ ] Каждый новый тест проверен мутацией.

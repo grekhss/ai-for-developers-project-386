@@ -18,7 +18,7 @@ npm 10 locally.
 | Lint | `npm run lint` |
 | Lint + autofix safe fixes | `npm run lint:fix` |
 | Lint language server (for editors) | `npm run lint:lsp` |
-| Контракт API → `contract/openapi.yaml` + TS-копии (с самопроверкой дрейфа) | `npm run contract` |
+| Контракт API → спека + TS-копии + клиентский SDK (с самопроверкой дрейфа) | `npm run contract` |
 | Проверка дрейфа артефактов контракта | `npm run contract:check` (входит в `check`) |
 | Tests (single run) | `npm test` |
 | Tests (watch mode) | `npm run test:watch` |
@@ -61,6 +61,12 @@ npm 10 locally.
   list every plugin the project wants. (`unicorn` is on by default in oxlint but
   is *not* in this project's array, so it is inactive — adding it back is a
   separate decision, not a fix.)
+- **`src/lib/api-gen/` is excluded via `ignorePatterns`, not via `plugins`.** The
+  hey-api client generated in K3 trips `no-shadow`/`no-underscore-dangle`, which
+  are `error`-level, so the whole generated folder is ignored. Don't relax the
+  rules for the rest of the project and don't touch `plugins` to fix it; the
+  folder still has to pass `tsc -b`, so a generator upgrade that breaks types is
+  caught by the gate, not by the linter.
 - `correctness` and `suspicious` are set to **error** so they fail the exit
   code. `perf` and `react/only-export-components` stay at `warn`, and
   `--deny-warnings` is not used, so warnings never fail `npm run lint`.
@@ -116,6 +122,17 @@ npm 10 locally.
   'vitest'`. Adding `globals` means editing that `types` array.
 - Tests are **colocated in `src/`**, so `tsc -b` typechecks them for free and a
   type error in a test fails `npm run check`.
+- **jsdom gives no `Request`; the global one is Node/undici, and it demands an
+  absolute URL** — in a browser a relative one is resolved from `location`. The
+  generated SDK builds `new Request('/api/…')` internally, so any test calling
+  `createHttpMeetingsApi()` dies with `ERR_INVALID_URL` before `fetch` runs (this
+  is how the vacuously green "create бросает при 400 и 409" was caught). Keep the
+  `BrowserRequest` shim in `http.test.ts`, which prepends the origin a browser
+  would add; tests that stub `fetch` should inspect the `Request` they receive —
+  `url`, `method`, `headers`, `await text()`, `credentials` — rather than a
+  `RequestInit` second argument, because the SDK calls `fetch(request)` with one
+  argument. The app itself is unaffected: the browser resolves the empty
+  `baseUrl` for it.
 - Mantine days are `<button>`s carrying `data-selected` / `data-today` /
   `data-outside`. Query those, not day text — numbers repeat across outside
   days, so `getByText('1')` is ambiguous. `data-today` is unique and is the
@@ -207,8 +224,26 @@ Overflow answers, and your own priors. Verified against
   и обе TS-копии, а в конце зовёт `contract/check.sh`, который то же самое перегенерирует во
   временный каталог и сверит — так успешный прогон гарантирует и свежесть, и детерминизм.
   Скрипта `contract:types` больше нет: ступени живут в `contract/generate.sh`. Новый
-  генератор (клиентский SDK — K3, JSON Schema — K4) добавляется ступенью в `generate.sh`
+  генератор (следующий — JSON Schema, K4) добавляется ступенью в `generate.sh`
   **и** диффом в `check.sh` — иначе он не попадёт в самопроверку.
+- **Клиентский SDK — ступень `npx openapi-ts` по `openapi-ts.config.ts`** (K3,
+  `@hey-api/openapi-ts@0.95.0`, закреплён точно; рантайм `@hey-api/client-fetch`
+  в `dependencies`). Каталог `src/lib/api-gen/` коммитится, как и остальные
+  артефакты, и правится только через `npm run contract`. Три ловушки, уже
+  оплаченные: (1) путь в `input` обязан начинаться с `./` — иначе hey-api
+  трактует `contract/openapi.yaml` как shorthand реестра
+  (`organization/project`) и падает; (2) вывод перенаправляется переменной
+  `API_GEN_OUT` — так `check.sh` генерирует SDK во временный каталог и сверяет
+  `diff -ru`, не трогая дерево; (3) плагины `typescript`/`sdk`/`client-fetch` —
+  имена, встроенные в openapi-ts, отдельных пакетов под ними нет. Конфиг лежит
+  в корне и подключён в `tsconfig.node.json`, чтобы типизироваться.
+- **`http.ts` — единственный адаптер SDK, и он добавляет только то, что контракт
+  не выражает**: `credentials: 'include'` (иначе браузер не подложит
+  session-cookie и сессия 401, D3) и прежние русские тексты ошибок. Функции SDK
+  по умолчанию не бросают, а возвращают `{ data, error }`, поэтому адаптер
+  сужает union по `error !== undefined` и пробрасывает исходное сетевое
+  исключение как есть. Порт `MeetingsApi` и сигнатуры не менялись — UI их не
+  замечает.
 - **В спеке есть ещё не реализованные ручки** (`/api/meeting-types`,
   `/api/meeting-types/{id}/deactivate`, `/api/admin/meetings` — S3/S4): контракт намеренно
   идёт впереди сервера, чтобы SDK (K3) собрал их до реализации. Их статус-коды и присутствие
@@ -290,9 +325,10 @@ calendar-of-meetings/
 │   ├── generate.sh         # npm run contract: генерация всех семейств + самопроверка
 │   ├── check.sh            # contract:check: генерация во временный каталог + diff
 │   └── openapi.yaml        # сгенерированная спека (коммитится, не править)
+├── openapi-ts.config.ts    # клиентский SDK из спеки → src/lib/api-gen (K3; в tsconfig.node.json)
 ├── tsconfig.json           # project references only
 ├── tsconfig.app.json       # src/ — the app's compiler options
-├── tsconfig.node.json      # vite.config.ts
+├── tsconfig.node.json      # vite.config.ts + openapi-ts.config.ts
 ├── tsconfig.server.json    # server/ + его тесты (nodenext, rootDir: server)
 ├── tsconfig.server.build.json  # эмитит dist-server/ (тесты исключены)
 ├── ARCHITECTURE.md         # how it's built and why; read before coding
@@ -324,6 +360,7 @@ calendar-of-meetings/
     │   └── useMeetings.test.ts
     ├── lib/                # framework-free domain code, unit-tested beside itself
     │   ├── contract.gen.ts # сгенерированные TS-типы контракта (не править)
+    │   ├── api-gen/        # сгенерированный клиентский SDK hey-api (не править)
     │   ├── date.ts         # APP_LOCALE, today, isWeekend, isPast, isBookable, formatDateRu
     │   ├── date.test.ts
     │   ├── slots.ts        # generateTimeSlots — workday bounds and slot length
@@ -331,7 +368,7 @@ calendar-of-meetings/
     │   └── meetings/
     │       ├── types.ts    # alias'ы Meeting/MeetingDraft/DateRange из contract.gen.ts
     │       ├── api.ts      # MeetingsApi interface + the instance the app uses (HTTP)
-    │       ├── http.ts     # createHttpMeetingsApi — fetch на /api/meetings
+    │       ├── http.ts     # createHttpMeetingsApi — адаптер SDK из api-gen на /api/meetings
     │       ├── http.test.ts
     │       ├── inMemory.ts # тестовая фабрика/fake (createInMemoryMeetingsApi)
     │       └── inMemory.test.ts

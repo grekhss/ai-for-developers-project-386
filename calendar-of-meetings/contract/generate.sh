@@ -15,9 +15,13 @@ mv -f tsp-output/@typespec/openapi3/openapi.yaml contract/openapi.yaml
 npx openapi-typescript contract/openapi.yaml -o src/lib/contract.gen.ts
 npx openapi-typescript contract/openapi.yaml -o server/contract.gen.ts
 
-# 3. Будущие ступени добавляются сюда (K3 — клиентский SDK, K4 — JSON Schema).
+# 3. Клиентский SDK фронта из той же спеки (K3). Конфиг — openapi-ts.config.ts;
+#    каталог исключён из oxlint, но проходит tsc -b.
+npx openapi-ts
 
-# 4. Самопроверка: перегенерация во временный каталог + diff по каждому семейству
+# 4. Будущие ступени добавляются сюда (K4 — JSON Schema для сервера).
+
+# 5. Самопроверка: перегенерация во временный каталог + diff по каждому семейству
 bash contract/check.sh
 
 echo "contract — артефакты сгенерированы и сверены"
