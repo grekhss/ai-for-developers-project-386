@@ -1,0 +1,227 @@
+openapi: 3.0.0
+info:
+  title: Календарь встреч
+  description: |-
+    Единый декларативный контракт API «Календаря встреч» — единственный источник
+    истины (K1, ADR-0004). Из него генерируются contract/openapi.yaml, TS-типы
+    для фронта (src/lib/contract.gen.ts) и сервера (server/contract.gen.ts);
+    руками .gen.ts не правятся — только npm run contract.
+
+    Брони слотов на встречи. Все /api, кроме входа, требуют сессионную cookie.
+
+    Контракт описывает формат и схему, не домен: прошедшие даты, выходные и
+    сетка слотов остаются фронтовой политикой, сервер валидирует только формат
+    (server/validate.ts).
+  version: 0.0.0
+tags: []
+paths:
+  /api/login:
+    post:
+      operationId: login
+      description: |-
+        Вход. Роль определяется только по паролю; для гостя обязателен непустой
+        bookerName (400), неверный пароль — 401. В ответ выставляется cookie `session`.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginInput'
+  /api/logout:
+    post:
+      operationId: logout
+      description: 'Выход: сессионная cookie очищается, тела нет.'
+      parameters: []
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+      security:
+        - ApiKeyAuth: []
+  /api/me:
+    get:
+      operationId: getCurrentSession
+      description: 'Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать её не может.'
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+      security:
+        - ApiKeyAuth: []
+  /api/meetings:
+    get:
+      operationId: listMeetings
+      description: Записи за полуинтервал дат, обе границы включительно, в порядке возрастания (date, time).
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: День начала, включительно, 'YYYY-MM-DD'.
+          schema:
+            type: string
+          explode: false
+        - name: to
+          in: query
+          required: true
+          description: День конца, включительно, 'YYYY-MM-DD'.
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Meeting'
+      security:
+        - ApiKeyAuth: []
+    post:
+      operationId: createMeeting
+      description: |-
+        Создание записи. Уже занятый слот — 409 (UNIQUE(date, time) в базе).
+        Возвращает запись с присвоенным id.
+      parameters: []
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeetingDraft'
+      security:
+        - ApiKeyAuth: []
+components:
+  schemas:
+    DateRange:
+      type: object
+      required:
+        - from
+        - to
+      properties:
+        from:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: День начала, включительно, 'YYYY-MM-DD'.
+        to:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: День конца, включительно, 'YYYY-MM-DD'.
+      description: Полуинтервал дат для запроса списка записей, обе границы включительно.
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+      description: 'Форма всех ошибок API: русское описание уходит клиенту как есть.'
+    LoginInput:
+      type: object
+      required:
+        - password
+      properties:
+        password:
+          type: string
+          minLength: 1
+          description: Пароль — непустая строка.
+        bookerName:
+          type: string
+          description: 'Имя гостя: для гостя обязательно (непустая строка), для админа игнорируется.'
+      description: 'Данные входа: пароль обязателен, имя гостя — опционально.'
+    Meeting:
+      type: object
+      required:
+        - id
+        - date
+        - time
+      properties:
+        id:
+          type: string
+          description: Идентификатор, присваиваемый базой данных.
+        date:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: День встречи, 'YYYY-MM-DD'.
+        time:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          description: Начало встречи, 'HH:mm'.
+      description: |-
+        Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
+        Mantine: 'YYYY-MM-DD' и 'HH:mm'. Строки, а не Date, ещё и потому, что
+        new Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных
+        часовых поясах показывает предыдущий день.
+    MeetingDraft:
+      type: object
+      required:
+        - date
+        - time
+      properties:
+        date:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: День встречи, 'YYYY-MM-DD'.
+        time:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          description: Начало встречи, 'HH:mm'.
+      description: Данные новой записи — всё, кроме идентификатора.
+    Session:
+      type: object
+      required:
+        - role
+        - bookerName
+      properties:
+        role:
+          type: string
+          enum:
+            - admin
+            - guest
+        bookerName:
+          type: string
+          nullable: true
+          description: Имя записывающегося; у админа его нет.
+      description: Сессия — то, что подписано в httpOnly-cookie `session` и определяет доступ.
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: cookie
+      name: session

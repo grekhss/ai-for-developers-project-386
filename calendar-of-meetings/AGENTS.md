@@ -18,14 +18,17 @@ npm 10 locally.
 | Lint | `npm run lint` |
 | Lint + autofix safe fixes | `npm run lint:fix` |
 | Lint language server (for editors) | `npm run lint:lsp` |
+| Контракт API → `contract/openapi.yaml` + TS-копии | `npm run contract` |
+| Проверка дрейфа артефактов контракта | `npm run contract:check` (входит в `check`) |
 | Tests (single run) | `npm test` |
 | Tests (watch mode) | `npm run test:watch` |
-| Full gate: lint + typecheck + tests | `npm run check` |
+| Full gate: contract:check + lint + typecheck + tests | `npm run check` |
 | Preview собранной статики | `npm run preview` — без `/api`, записи не грузятся |
 
-- **There is no `typecheck` script.** `npm run build` runs `tsc -b` first, and
-  `npm run check` runs lint + `tsc -b` + `tsc -p tsconfig.server.json --noEmit`
-  + vitest without bundling — those are the two type gates. Note that `npm run
+- **There is no `typecheck` script.** `npm run build` runs `npm run contract`
+  then `tsc -b`, and `npm run check` runs `contract:check` + lint + `tsc -b` +
+  `tsc -p tsconfig.server.json --noEmit` + vitest without bundling — those are the
+  two type gates. Note that `npm run
   dev` gives HMR but **no type feedback**: Vite and `tsx watch` strip types
   without checking them, so run `check` (or
   `npx tsc --noEmit -p tsconfig.app.json --watch` in a second terminal) while
@@ -177,6 +180,32 @@ Overflow answers, and your own priors. Verified against
   take a `DateStringValue`) over reaching into internals. Props prefixed `__`
   are private — don't pass them.
 
+## API-контракт (TypeSpec)
+
+- **Источник истины — `contract/main.tsp`** (TypeSpec; K1/ADR-0004). `contract/openapi.yaml`,
+  `src/lib/contract.gen.ts` и `server/contract.gen.ts` — **сгенерированные артефакты**:
+  руками их не правят, правка идёт в `.tsp` и приезжает через `npm run contract`.
+- **Контракт описывает формат и схему, не домен.** Прошедшие даты, выходные и сетка
+  слотов остаются фронтовой политикой; `server/validate.ts` валидирует только формат
+  и остаётся ручным — `@pattern` в контракте лишь зеркалит его `DATE_RE`/`TIME_RE`.
+- **Две копии генерата, а не одна общая**: сервер не может импортировать из `src/`
+  (`rootDir: server`), поэтому `openapi-typescript` зовётся дважды; идентичность копий
+  фиксирует `server/contract.test.ts`.
+- **Типы подключаются alias'ами** — `openapi-typescript` кладёт модели в
+  `components['schemas'][...]`, поэтому `src/lib/meetings/types.ts` и `server/types.ts`
+  держат `export type Meeting = components['schemas']['Meeting']`, а не re-export имени.
+- **Пин `~1.11.0`** — последняя линия TypeSpec, работающая на Node 20 (с 1.12 компилятор
+  требует Node ≥22). Не поднимать по отдельности от Node: смена Node → пересмотр пина.
+- **`.npmrc` с `legacy-peer-deps=true`** — у `openapi-typescript@7` устаревший peer
+  `typescript@^5.x` при TS 6 в проекте; с TS 6 генератор работает (проверено генерацией),
+  но флаг глушит peer-проверки **для всего дерева**. Если peer реально несовместим —
+  проверять вручную: `npm view <pkg> peerDependencies`.
+- **`contract:check` (в `check`) ловит дрейф**: генерирует во временный каталог и делает
+  `diff` с закоммиченными артефактами. Правил `.tsp` — сначала `npm run contract`, потом
+  гейт; ручная правка `.gen.ts`/`openapi.yaml` гейт роняет.
+- **`tsp-output/`** — промежуточный выход `tsp compile`, в `.gitignore`; `npm run contract`
+  переносит спеку в `contract/openapi.yaml`.
+
 ## Conventions
 
 - **Server imports carry the `.js` suffix** (`server/routes.ts` imports
@@ -244,6 +273,12 @@ calendar-of-meetings/
 ├── vite.config.ts          # react() plugin + vitest projects (app/server) + /api proxy
 ├── postcss.config.cjs      # CommonJS on purpose (package.json is ESM)
 ├── .oxlintrc.json
+├── .npmrc                  # legacy-peer-deps=true — причина в «API-контракт (TypeSpec)»
+├── contract/               # TypeSpec: единственный источник истины контракта API
+│   ├── main.tsp            # модели и ручки всего API; правка только здесь
+│   ├── tspconfig.yaml      # emit @typespec/openapi3
+│   ├── check.sh            # contract:check: генерация во временный каталог + diff
+│   └── openapi.yaml        # сгенерированная спека (коммитится, не править)
 ├── tsconfig.json           # project references only
 ├── tsconfig.app.json       # src/ — the app's compiler options
 ├── tsconfig.node.json      # vite.config.ts
@@ -260,7 +295,9 @@ calendar-of-meetings/
 │   ├── repository.ts       # createRepository: list/create; UNIQUE → DuplicateMeetingError
 │   ├── db.ts               # createDatabase + defaultDbPath (data/meetings.sqlite)
 │   ├── validate.ts         # форматная валидация тела и query (не домен!)
-│   ├── types.ts            # Meeting/MeetingDraft — копия контракта из src
+│   ├── contract.gen.ts     # сгенерированные TS-типы контракта (не править)
+│   ├── types.ts            # alias'ы Meeting/MeetingDraft из contract.gen.ts
+│   ├── contract.test.ts    # @vitest-environment node: охранитель артефактов контракта
 │   ├── repository.test.ts  # @vitest-environment node
 │   └── routes.test.ts      # интеграция: createApp(':memory:') + listen(0) + fetch
 └── src/
@@ -275,12 +312,13 @@ calendar-of-meetings/
     │   ├── useMeetings.ts  # load/create meetings; takes a MeetingsApi so tests inject a fake
     │   └── useMeetings.test.ts
     ├── lib/                # framework-free domain code, unit-tested beside itself
+    │   ├── contract.gen.ts # сгенерированные TS-типы контракта (не править)
     │   ├── date.ts         # APP_LOCALE, today, isWeekend, isPast, isBookable, formatDateRu
     │   ├── date.test.ts
     │   ├── slots.ts        # generateTimeSlots — workday bounds and slot length
     │   ├── slots.test.ts
     │   └── meetings/
-    │       ├── types.ts    # Meeting, MeetingDraft, DateRange
+    │       ├── types.ts    # alias'ы Meeting/MeetingDraft/DateRange из contract.gen.ts
     │       ├── api.ts      # MeetingsApi interface + the instance the app uses (HTTP)
     │       ├── http.ts     # createHttpMeetingsApi — fetch на /api/meetings
     │       ├── http.test.ts
