@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import dayjs from 'dayjs';
-import { bookingsApi, type BookingsApi } from '../lib/bookings/api.ts';
-import type { Booking, BookingDraft } from '../lib/bookings/types.ts';
+import { meetingsApi, type MeetingsApi } from '../lib/meetings/api.ts';
+import type { Meeting, MeetingDraft } from '../lib/meetings/types.ts';
 import { today } from '../lib/date.ts';
 
 /**
@@ -13,38 +13,38 @@ const HORIZON_DAYS = 90;
 const LOAD_ERROR = 'Не удалось получить список записей.';
 const CREATE_ERROR = 'Не удалось создать запись. Выберите другое время.';
 
-interface BookingsState {
-  bookings: Booking[];
+interface MeetingsState {
+  meetings: Meeting[];
   /** Пока первый ответ не пришёл. */
   loading: boolean;
   /** Текст ошибки для показа пользователю; `null`, если всё в порядке. */
   error: string | null;
 }
 
-export interface UseBookingsResult extends BookingsState {
+export interface UseMeetingsResult extends MeetingsState {
   /** Перечитывает записи. */
   refresh: () => Promise<void>;
   /**
    * Создаёт запись и возвращает её. Ошибки не бросает: кладёт текст в `error`
    * и возвращает `null` — так вызывающий отличает успех от неудачи.
    */
-  createBooking: (draft: BookingDraft) => Promise<Booking | null>;
+  createMeeting: (draft: MeetingDraft) => Promise<Meeting | null>;
 }
 
 /**
  * Загрузка и создание записей. Реализация передаётся параметром, чтобы тесты
  * подставляли заглушку без модулей-моков.
  */
-export function useBookings(api: BookingsApi = bookingsApi): UseBookingsResult {
-  const [state, setState] = useState<BookingsState>({
-    bookings: [],
+export function useMeetings(api: MeetingsApi = meetingsApi): UseMeetingsResult {
+  const [state, setState] = useState<MeetingsState>({
+    meetings: [],
     loading: true,
     error: null,
   });
 
   // Запрос сам по себе состояние не трогает — только возвращает данные.
   const request = useCallback(
-    (): Promise<Booking[]> =>
+    (): Promise<Meeting[]> =>
       api.list({
         from: today(),
         to: dayjs().add(HORIZON_DAYS, 'day').format('YYYY-MM-DD'),
@@ -54,22 +54,22 @@ export function useBookings(api: BookingsApi = bookingsApi): UseBookingsResult {
 
   const refresh = useCallback(async () => {
     try {
-      setState({ bookings: await request(), loading: false, error: null });
+      setState({ meetings: await request(), loading: false, error: null });
     } catch {
       setState((previous) => ({ ...previous, loading: false, error: LOAD_ERROR }));
     }
   }, [request]);
 
-  const createBooking = useCallback(async (draft: BookingDraft) => {
+  const createMeeting = useCallback(async (draft: MeetingDraft) => {
     try {
-      const booking = await api.create(draft);
+      const meeting = await api.create(draft);
       await refresh();
-      return booking;
+      return meeting;
     } catch {
       // При конфликте (409) сервер не создал запись, а локальный список устарел:
       // чужой занятый слот остался бы визуально свободным. Сначала перечитываем,
       // потом ставим текст ошибки — refresh при успехе сбрасывает error в null
-      // (useBookings.ts:57), и наоборот порядок стёр бы CREATE_ERROR.
+      // (useMeetings.ts:57), и наоборот порядок стёр бы CREATE_ERROR.
       await refresh();
       setState((previous) => ({ ...previous, error: CREATE_ERROR }));
       return null;
@@ -86,10 +86,10 @@ export function useBookings(api: BookingsApi = bookingsApi): UseBookingsResult {
 
     const load = async () => {
       try {
-        const bookings = await request();
-        if (!cancelled) setState({ bookings, loading: false, error: null });
+        const meetings = await request();
+        if (!cancelled) setState({ meetings, loading: false, error: null });
       } catch {
-        if (!cancelled) setState({ bookings: [], loading: false, error: LOAD_ERROR });
+        if (!cancelled) setState({ meetings: [], loading: false, error: LOAD_ERROR });
       }
     };
 
@@ -100,5 +100,5 @@ export function useBookings(api: BookingsApi = bookingsApi): UseBookingsResult {
     };
   }, [request]);
 
-  return { ...state, refresh, createBooking };
+  return { ...state, refresh, createMeeting };
 }

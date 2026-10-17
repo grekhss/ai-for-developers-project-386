@@ -2,11 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MantineProvider } from '@mantine/core';
-import BookingModal from './BookingModal.tsx';
+import MeetingModal from './MeetingModal.tsx';
 
 const DATE = '2026-10-05';
 
-function renderModal(overrides: Partial<Parameters<typeof BookingModal>[0]> = {}) {
+function renderModal(overrides: Partial<Parameters<typeof MeetingModal>[0]> = {}) {
   const props = {
     date: DATE,
     takenTimes: [] as string[],
@@ -20,7 +20,7 @@ function renderModal(overrides: Partial<Parameters<typeof BookingModal>[0]> = {}
   // Mantine v9 бросает ошибку без MantineProvider в дереве.
   const view = render(
     <MantineProvider defaultColorScheme="dark">
-      <BookingModal {...props} />
+      <MeetingModal {...props} />
     </MantineProvider>
   );
 
@@ -33,7 +33,7 @@ function slotButtons(): HTMLElement[] {
     .filter((button) => /^\d{2}:\d{2}$/.test(button.textContent ?? ''));
 }
 
-describe('BookingModal', () => {
+describe('MeetingModal', () => {
   it('показывает выбранный день по-русски и подсказку', () => {
     renderModal();
 

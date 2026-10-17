@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
-import { createRepository, DuplicateBookingError } from './repository.js';
+import { createRepository, DuplicateMeetingError } from './repository.js';
 
 describe('createRepository', () => {
   it('list отдаёт пустой список без записей', () => {
@@ -28,25 +28,25 @@ describe('createRepository', () => {
 
   it('create возвращает запись с присвоенным id строкой', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    const booking = repo.create({ date: '2026-01-05', time: '14:00' });
-    expect(booking).toEqual({ id: '1', date: '2026-01-05', time: '14:00' });
-    // id в ответе — строка, как в контракте src/lib/bookings/types.ts.
-    expect(typeof booking.id).toBe('string');
+    const meeting = repo.create({ date: '2026-01-05', time: '14:00' });
+    expect(meeting).toEqual({ id: '1', date: '2026-01-05', time: '14:00' });
+    // id в ответе — строка, как в контракте src/lib/meetings/types.ts.
+    expect(typeof meeting.id).toBe('string');
   });
 
-  it('повторный create того же (date, time) бросает DuplicateBookingError', () => {
+  it('повторный create того же (date, time) бросает DuplicateMeetingError', () => {
     const repo = createRepository(createDatabase(':memory:'));
     repo.create({ date: '2026-01-05', time: '14:00' });
 
-    expect(() => repo.create({ date: '2026-01-05', time: '14:00' })).toThrow(DuplicateBookingError);
+    expect(() => repo.create({ date: '2026-01-05', time: '14:00' })).toThrow(DuplicateMeetingError);
   });
 
   it('не-UNIQUE ошибки БД не маскируются под дубль', () => {
     const db = createDatabase(':memory:');
     // Подменяем схему: CHECK-ограничение, нарушение которого даёт код
     // SQLITE_CONSTRAINT_CHECK, а не SQLITE_CONSTRAINT_UNIQUE.
-    db.exec('DROP TABLE bookings');
-    db.exec(`CREATE TABLE bookings (
+    db.exec('DROP TABLE meetings');
+    db.exec(`CREATE TABLE meetings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,
       time TEXT NOT NULL,
@@ -63,6 +63,6 @@ describe('createRepository', () => {
     }
 
     expect(thrown).toBeInstanceOf(Error);
-    expect(thrown).not.toBeInstanceOf(DuplicateBookingError);
+    expect(thrown).not.toBeInstanceOf(DuplicateMeetingError);
   });
 });

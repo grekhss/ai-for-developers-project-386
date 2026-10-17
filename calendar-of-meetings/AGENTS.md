@@ -37,7 +37,7 @@ npm 10 locally.
 - **`npm start` serves only after `npm run build`** — it needs both `dist/` and
   `dist-server/`.
 - **`npm run preview` is a build-only smoke check.** It serves the static
-  `dist/` without `/api`, so bookings fail to load.
+  `dist/` without `/api`, so meetings fail to load.
 - Hexlet's own suite is separate and external: it runs on every push via
   `.github/workflows/hexlet-check.yml` at the repo root, which must not be
   edited, renamed, or deleted. It does **not** run lint, typecheck, or the local
@@ -137,11 +137,11 @@ npm 10 locally.
   October and fails in November. `/^\d{1,2} [а-яё]+ \d{4}$/` proves Russian
   locale in any month.
 - **`App` takes an optional `api` prop, and it is load-bearing in tests.**
-  `lib/bookings/api.ts` exports a module-level singleton, so without a per-test
-  `createInMemoryBookingsApi()` the bookings leak between test cases in the same
+  `lib/meetings/api.ts` exports a module-level singleton, so without a per-test
+  `createInMemoryMeetingsApi()` the meetings leak between test cases in the same
   file and a slot booked by an earlier test is `disabled` in a later one — the
   click silently does nothing and the test times out on a `findBy`. Pass
-  `api={createInMemoryBookingsApi()}` from every render test.
+  `api={createInMemoryMeetingsApi()}` from every render test.
 
 ## Mantine v9 dates — check this before writing date code
 
@@ -198,7 +198,7 @@ Overflow answers, and your own priors. Verified against
 - **`react/set-state-in-effect` is an error, and it is transitive:** calling a
   function that touches `setState` from an effect body is flagged *even if the
   `setState` happens after an `await`*. So a "load on mount" effect can't call
-  the hook's own `refresh` — see the inlined `load` in `useBookings.ts` for the
+  the hook's own `refresh` — see the inlined `load` in `useMeetings.ts` for the
   accepted shape. Don't "simplify" it back into `void refresh()`.
 - **`strict` is on** in `tsconfig.app.json` (enabled 2026-10-03, so don't assume
   the stock Vite template's laxer defaults). Nullable date/time state — the bulk
@@ -250,17 +250,17 @@ calendar-of-meetings/
 ├── tsconfig.server.json    # server/ + его тесты (nodenext, rootDir: server)
 ├── tsconfig.server.build.json  # эмитит dist-server/ (тесты исключены)
 ├── ARCHITECTURE.md         # how it's built and why; read before coding
-├── data/bookings.sqlite    # SQLite-файл (в .gitignore; создаётся в server/db.ts)
+├── data/meetings.sqlite    # SQLite-файл (в .gitignore; создаётся в server/db.ts)
 ├── dist-server/            # собранный сервер (в .gitignore)
 ├── public/favicon.svg      # served at /
 ├── server/                 # express + better-sqlite3; импорты — с .js-суффиксом
 │   ├── index.ts            # wiring: БД → createApp → listen; логики нет
 │   ├── app.ts              # createApp: express.json, роуты, статика dist/
-│   ├── routes.ts           # GET/POST /api/bookings
-│   ├── repository.ts       # createRepository: list/create; UNIQUE → DuplicateBookingError
-│   ├── db.ts               # createDatabase + defaultDbPath (data/bookings.sqlite)
+│   ├── routes.ts           # GET/POST /api/meetings
+│   ├── repository.ts       # createRepository: list/create; UNIQUE → DuplicateMeetingError
+│   ├── db.ts               # createDatabase + defaultDbPath (data/meetings.sqlite)
 │   ├── validate.ts         # форматная валидация тела и query (не домен!)
-│   ├── types.ts            # Booking/BookingDraft — копия контракта из src
+│   ├── types.ts            # Meeting/MeetingDraft — копия контракта из src
 │   ├── repository.test.ts  # @vitest-environment node
 │   └── routes.test.ts      # интеграция: createApp(':memory:') + listen(0) + fetch
 └── src/
@@ -268,28 +268,28 @@ calendar-of-meetings/
     ├── App.tsx             # page-level state and layout; renders components/
     ├── App.test.tsx        # colocated vitest tests
     ├── components/         # rendering only; props in, no domain rules
-    │   ├── BookingModal.tsx   # slot picker in a Modal; controlled time prop
-    │   ├── BookingModal.test.tsx
+    │   ├── MeetingModal.tsx   # slot picker in a Modal; controlled time prop
+    │   ├── MeetingModal.test.tsx
     │   └── MeetingCalendar.tsx  # the only component that renders date selection
     ├── hooks/              # React state around lib; the only place with useState
-    │   ├── useBookings.ts  # load/create bookings; takes a BookingsApi so tests inject a fake
-    │   └── useBookings.test.ts
+    │   ├── useMeetings.ts  # load/create meetings; takes a MeetingsApi so tests inject a fake
+    │   └── useMeetings.test.ts
     ├── lib/                # framework-free domain code, unit-tested beside itself
     │   ├── date.ts         # APP_LOCALE, today, isWeekend, isPast, isBookable, formatDateRu
     │   ├── date.test.ts
     │   ├── slots.ts        # generateTimeSlots — workday bounds and slot length
     │   ├── slots.test.ts
-    │   └── bookings/
-    │       ├── types.ts    # Booking, BookingDraft, DateRange
-    │       ├── api.ts      # BookingsApi interface + the instance the app uses (HTTP)
-    │       ├── http.ts     # createHttpBookingsApi — fetch на /api/bookings
+    │   └── meetings/
+    │       ├── types.ts    # Meeting, MeetingDraft, DateRange
+    │       ├── api.ts      # MeetingsApi interface + the instance the app uses (HTTP)
+    │       ├── http.ts     # createHttpMeetingsApi — fetch на /api/meetings
     │       ├── http.test.ts
-    │       ├── inMemory.ts # тестовая фабрика/fake (createInMemoryBookingsApi)
+    │       ├── inMemory.ts # тестовая фабрика/fake (createInMemoryMeetingsApi)
     │       └── inMemory.test.ts
     └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup (app-проект vitest)
 ```
 
-**Read `ARCHITECTURE.md` first.** It covers the layers, the `BookingsApi`
+**Read `ARCHITECTURE.md` first.** It covers the layers, the `MeetingsApi`
 contract, the decisions that cost something (controlled slot in `App`, inlined
 mount load, `api` prop in `App`) and the known gaps. This file covers commands,
 conventions, and Mantine traps — the two documents deliberately don't repeat each
@@ -297,7 +297,7 @@ other.
 
 **Three layers:** `lib/` holds pure functions and types with no React and no
 Mantine imports; `components/` renders; `hooks/` is the only place that owns
-React state and the only bridge between `components/` and `lib/bookings/api.ts`.
+React state and the only bridge between `components/` and `lib/meetings/api.ts`.
 Domain rules and date formatting live in `lib/` and are duplicated nowhere — if
 a second component needs "is this a bookable day?" or "how do we spell a date in
 Russian?", it imports from `lib/`, it does not re-derive it. Keep
@@ -305,8 +305,8 @@ Russian?", it imports from `lib/`, it does not re-derive it. Keep
 rest of the app passes plain `'YYYY-MM-DD'` strings around.
 
 **`App` owns only UI state; `lib` state is never mirrored.** It holds
-`selectedDate`, `time`, and `lastBooked` (a `BookingDraft` kept only to render
-the «Запись: …» line — `Booking` carries no creation timestamp, so "the newest
+`selectedDate`, `time`, and `lastBooked` (a `MeetingDraft` kept only to render
+the «Запись: …» line — `Meeting` carries no creation timestamp, so "the newest
 one" isn't derivable from the sorted array). Resetting on date change happens in
 the click handler, not in an effect:
 
@@ -314,12 +314,12 @@ the click handler, not in an effect:
 onSelect={(date) => { setTime(null); setSelectedDate(date); }}
 ```
 
-`BookingModal` is deliberately always mounted (so Mantine keeps its close
+`MeetingModal` is deliberately always mounted (so Mantine keeps its close
 animation) and takes `date: string | null` where `null` means closed — no `key`
-remount, no local `useState` for the slot. `takenTimes` comes from the bookings
+remount, no local `useState` for the slot. `takenTimes` comes from the meetings
 for that date, which is what makes a booked slot unselectable on reopen.
 
-**Data access goes through `BookingsApi`** (`lib/bookings/api.ts`), never
+**Data access goes through `MeetingsApi`** (`lib/meetings/api.ts`), never
 straight to a concrete implementation. `api.ts` holds the interface *and* the
 instance the app uses, so switching to HTTP is a one-line change there;
 components and hooks only see the interface. Hooks take the API as a parameter

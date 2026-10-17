@@ -1,32 +1,32 @@
-import type { BookingsApi } from './api.ts';
-import type { Booking } from './types.ts';
+import type { MeetingsApi } from './api.ts';
+import type { Meeting } from './types.ts';
 
 /**
  * Записи в памяти — заглушка вместо бэкенда. Фабрика, а не синглтон, чтобы
  * каждый вызов получал своё хранилище: так тесты не делят состояние.
  */
-export function createInMemoryBookingsApi(seed: Booking[] = []): BookingsApi {
-  const bookings: Booking[] = [...seed];
+export function createInMemoryMeetingsApi(seed: Meeting[] = []): MeetingsApi {
+  const meetings: Meeting[] = [...seed];
   // Максимум id сида, а не его длина: при сиде ['2', '3'] длина дала бы
   // следующий id '3' — уже занятый.
-  let lastId = bookings.reduce((max, booking) => Math.max(max, Number(booking.id) || 0), 0);
+  let lastId = meetings.reduce((max, meeting) => Math.max(max, Number(meeting.id) || 0), 0);
 
   return {
     async list({ from, to }) {
       // Даты сравниваются как строки: формат 'YYYY-MM-DD' упорядочен
       // лексикографически так же, как хронологически. С Date так не выйдет.
-      return bookings
-        .filter((booking) => booking.date >= from && booking.date <= to)
+      return meetings
+        .filter((meeting) => meeting.date >= from && meeting.date <= to)
         .sort((left, right) => left.date.localeCompare(right.date) || left.time.localeCompare(right.time));
     },
 
     async create(draft) {
       lastId += 1;
 
-      const booking: Booking = { id: String(lastId), ...draft };
-      bookings.push(booking);
+      const meeting: Meeting = { id: String(lastId), ...draft };
+      meetings.push(meeting);
 
-      return booking;
+      return meeting;
     },
   };
 }

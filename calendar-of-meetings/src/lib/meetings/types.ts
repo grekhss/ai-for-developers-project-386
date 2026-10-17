@@ -4,7 +4,7 @@
  * new Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных
  * часовых поясах показывает предыдущий день.
  */
-export interface Booking {
+export interface Meeting {
   /** Идентификат, присваиваемый сервером. */
   id: string;
   /** День встречи, 'YYYY-MM-DD'. */
@@ -14,7 +14,7 @@ export interface Booking {
 }
 
 /** Данные новой записи — всё, кроме идентификатора. */
-export interface BookingDraft {
+export interface MeetingDraft {
   date: string;
   time: string;
 }

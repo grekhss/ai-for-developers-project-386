@@ -16,7 +16,7 @@ TypeScript 6 со `strict`, Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 
 Пользователь выбирает день, во всплывающем окне выбирает слот, запись уходит по
 HTTP на express-сервер и хранится в SQLite — поэтому переживает перезапуск, а
 дубль слота отклоняется сервером. Компоненты и хуки видят только абстракцию
-`BookingsApi` (§4), смена реализации их не затрагивает.
+`MeetingsApi` (§4), смена реализации их не затрагивает.
 
 ## 2. Поток данных
 
@@ -25,26 +25,26 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App
                                                                  │
         ┌────────────────────────────────────────────────────────┤
         │                                                        │
-  MeetingCalendar                                        BookingModal
+  MeetingCalendar                                        MeetingModal
   (DatePicker)                                           (Modal + TimeGrid)
         │                                                        ▲
         │ onSelect(date)                                         │ time, onBook
         ▼                                                        │
  App: selectedDate, time ──────── onChangeTime ──────────────────┘
         │
-        │ handleBook(draft) ──► await createBooking(draft) ──► Booking | null
+        │ handleBook(draft) ──► await createMeeting(draft) ──► Meeting | null
         ▼
- useBookings(api) ──► BookingsApi ──► createHttpBookingsApi ──► fetch /api/bookings
+ useMeetings(api) ──► MeetingsApi ──► createHttpMeetingsApi ──► fetch /api/meetings
         │                                                          (в dev — Vite-прокси,
         │                                                           в проде — тот же origin)
         │                                                          ▼
-        └─► bookings ─► App.takenTimes ─► BookingModal disableTime   express (server/):
+        └─► meetings ─► App.takenTimes ─► MeetingModal disableTime   express (server/):
         │                                 validate (только формат) → repository → SQLite
-        │                                                           (data/bookings.sqlite)
-        └─► bookings / error / loading ─► строки статуса под календарём
+        │                                                           (data/meetings.sqlite)
+        └─► meetings / error / loading ─► строки статуса под календарём
 ```
 
-Запросы формирует только `createHttpBookingsApi` (`src/lib/bookings/http.ts`);
+Запросы формирует только `createHttpMeetingsApi` (`src/lib/meetings/http.ts`);
 за ними стоит поток «репозиторий → SQLite», описанный в §3. В dev `/api`
 проксируется Vite на :4000, в проде express отдаёт и API, и статику из `dist/`.
 
@@ -56,9 +56,9 @@ Mantine, ни от его внутреннего устройства.
 
 | Слой | Файлы | Правило |
 | --- | --- | --- |
-| `lib/` | `date.ts`, `slots.ts`, `bookings/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. |
-| `hooks/` | `useBookings.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственный мост к `BookingsApi`. |
-| `components/` | `MeetingCalendar.tsx`, `BookingModal.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
+| `lib/` | `date.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. |
+| `hooks/` | `useMeetings.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственный мост к `MeetingsApi`. |
+| `components/` | `MeetingCalendar.tsx`, `MeetingModal.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
 | `App.tsx` | — | Только UI-состояние и раскладка. Не импортирует `@mantine/dates`. |
 
 Зависимости строго односторонние: `App → components → lib`, `App → hooks → lib`.
@@ -80,16 +80,16 @@ Mantine, ни от его внутреннего устройства.
 
 ## 4. Контракты
 
-Все даты и времена — **строки**, не `Date`-объекты (`src/lib/bookings/types.ts:7`):
+Все даты и времена — **строки**, не `Date`-объекты (`src/lib/meetings/types.ts:7`):
 
 ```ts
-Booking    { id: string; date: 'YYYY-MM-DD'; time: 'HH:mm' }
-BookingDraft { date: 'YYYY-MM-DD'; time: 'HH:mm' }   // то же без id
+Meeting    { id: string; date: 'YYYY-MM-DD'; time: 'HH:mm' }
+MeetingDraft { date: 'YYYY-MM-DD'; time: 'HH:mm' }   // то же без id
 DateRange  { from: 'YYYY-MM-DD'; to: 'YYYY-MM-DD' }  // обе границы включительно
 
-BookingsApi {
-  list(range: DateRange): Promise<Booking[]>    // возрастание по (date, time)
-  create(draft: BookingDraft): Promise<Booking> // возвращает запись с присвоенным id
+MeetingsApi {
+  list(range: DateRange): Promise<Meeting[]>    // возрастание по (date, time)
+  create(draft: MeetingDraft): Promise<Meeting> // возвращает запись с присвоенным id
 }
 ```
 
@@ -125,7 +125,7 @@ const notBookable = (date: string): boolean => !isBookable(date);
 <DatePicker excludeDate={notBookable} />
 ```
 
-**Выбор слота живёт в `App`, а не в модалке** (`src/components/BookingModal.tsx:32`).
+**Выбор слота живёт в `App`, а не в модалке** (`src/components/MeetingModal.tsx:32`).
 Очевидная версия — `useState` внутри модалки — упирается в
 `react/set-state-in-effect`: сброс при смене даты пришлось бы делать в эффекте, а
 правило его запрещает. Контролируемый пропс `time` сбрасывается прямо в
@@ -135,35 +135,35 @@ const notBookable = (date: string): boolean => !isBookable(date);
 onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date); }}
 ```
 
-Побочная выгода: `BookingModal` всегда смонтирован и получает `date: string | null`,
+Побочная выгода: `MeetingModal` всегда смонтирован и получает `date: string | null`,
 где `null` означает закрыто, поэтому Mantine не теряет анимацию закрытия.
 
 **Первичная загрузка объявлена инлайном в эффекте, а не вызовом `refresh`**
-(`src/hooks/useBookings.ts:79`). Правило `react/set-state-in-effect` срабатывает
+(`src/hooks/useMeetings.ts:79`). Правило `react/set-state-in-effect` срабатывает
 **транзитивно**: оно ругается на вызов функции, трогающей состояние, из тела
 эффекта — даже если `setState` происходит после `await`. Отсюда флаг `cancelled`:
 он же спасает от двойного вызова эффекта в `StrictMode`.
 
-**`lastBooked` хранит `BookingDraft`, а не `Booking`** (`src/App.tsx:18`). Нужен
-только для строки «Запись: …». У `Booking` нет времени создания, поэтому «самая
+**`lastBooked` хранит `MeetingDraft`, а не `Meeting`** (`src/App.tsx:18`). Нужен
+только для строки «Запись: …». У `Meeting` нет времени создания, поэтому «самая
 свежая» из отсортированного массива не выводится, а «последняя по дате» — это не
-то, что записал пользователь. Строка ставится только если `createBooking`
+то, что записал пользователь. Строка ставится только если `createMeeting`
 вернул запись (при неудаче — `null`), и сбрасывается выбором дня прямо в
 `onSelect`, без эффектов.
 
 **Проп `api` в `App` — не удобство, а необходимость** (`src/App.tsx:12`).
-`lib/bookings/api.ts:19` экспортирует модульный синглтон; без подмены записи
+`lib/meetings/api.ts:19` экспортирует модульный синглтон; без подмены записи
 утекают между тестами одного файла, слот оказывается `disabled`, `userEvent`
 кликает по неактивной кнопке, `time` не выставляется, и тест падает по таймауту
 `findBy`. Воспроизведено: с синглтоном падает тест «занятый слот в следующий раз
 не выбирается».
 
-**Фабрика, а не синглтон, в `inMemory`** (`src/lib/bookings/inMemory.ts:8`) — по
+**Фабрика, а не синглтон, в `inMemory`** (`src/lib/meetings/inMemory.ts:8`) — по
 той же причине. Отдельный тест «не делит хранилище между вызовами фабрики»
 фиксирует это намерение.
 
-**После конфликта (409) `createBooking` перечитывает список до показа ошибки**
-(`src/hooks/useBookings.ts`). Если сервер отклонил слот, локальный `bookings`
+**После конфликта (409) `createMeeting` перечитывает список до показа ошибки**
+(`src/hooks/useMeetings.ts`). Если сервер отклонил слот, локальный `meetings`
 устарел: чужой занятый слот остался бы визуально свободным. Поэтому в `catch`
 сначала `await refresh()`, и только потом `error: CREATE_ERROR` — обратный
 порядок стёр бы текст ошибки, потому что `refresh` при успехе ставит
@@ -173,13 +173,13 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 | Задача | Что менять |
 | --- | --- |
-| Смена хранилища/формата на сервере | Весь сервер за `BookingsApi` фронта: `bookingsApi` уже указывает на `createHttpBookingsApi()` (`api.ts:19`); дальше трогается только `server/`. |
+| Смена хранилища/формата на сервере | Весь сервер за `MeetingsApi` фронта: `meetingsApi` уже указывает на `createHttpMeetingsApi()` (`api.ts:19`); дальше трогается только `server/`. |
 | Доменная валидация на сервере (2-й клиент, публичный API) | Сейчас сервер проверяет только формат (§7-3). Правила (`isBookable`, сетка слотов) вынести в общий модуль и звать из `server/validate.ts`; UI продолжит пользоваться `lib/`. |
 | Праздники, дни без свободных слотов | `lib/date.ts:34` `isBookable`. |
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
-| Горизонт списка записей | `src/hooks/useBookings.ts:11` `HORIZON_DAYS`. |
-| Ручное обновление списка | `refresh` уже возвращается хуком (`useBookings.ts:55`), но UI его пока не вызывает — кнопка добавится без изменения хука. |
-| Список всех записей (не только модалка) | `App.tsx` получает весь массив `bookings`; сортировка и фильтрация — его дело, а не компонентов. |
+| Горизонт списка записей | `src/hooks/useMeetings.ts:11` `HORIZON_DAYS`. |
+| Ручное обновление списка | `refresh` уже возвращается хуком (`useMeetings.ts:55`), но UI его пока не вызывает — кнопка добавится без изменения хука. |
+| Список всех записей (не только модалка) | `App.tsx` получает весь массив `meetings`; сортировка и фильтрация — его дело, а не компонентов. |
 
 ## 7. Известные ограничения
 
@@ -207,8 +207,8 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-62 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useBookings` 6,
-`BookingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 5,
+62 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useMeetings` 6,
+`MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 5,
 `routes` 8. Фронтовые тесты колоцированы в `src/`, поэтому `tsc -b` проверяет их
 типы бесплатно; серверные проверяет `tsc -p tsconfig.server.json --noEmit`.
 
@@ -240,7 +240,7 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
   Проверенные: `-weekday` (7 ячеек, lowercase «пн»…«вс»), `-weekdaysRow`,
   `-calendarHeaderLevel`, `-day`, `-monthTbody`.
 - **Интеграционный тест обязан передать свой `api`** (обычно
-  `createInMemoryBookingsApi()`, для неудачного создания — заглушку с падающим
+  `createInMemoryMeetingsApi()`, для неудачного создания — заглушку с падающим
   `create`) — см. раздел 5.
 
 Каждый новый тест проверен мутацией: `takenTimes={[]}` валит тест «занятый

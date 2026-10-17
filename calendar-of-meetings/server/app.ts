@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import express from 'express';
-import type { BookingsRepository } from './repository.js';
+import type { MeetingsRepository } from './repository.js';
 import { createRoutes } from './routes.js';
 
 export interface AppOptions {
@@ -13,7 +13,7 @@ export interface AppOptions {
  * приложение на ':memory:'-репозитории. Здесь нет и никакого listen на импорте —
  * его делает только index.ts.
  */
-export function createApp(repo: BookingsRepository, options: AppOptions = {}): express.Express {
+export function createApp(repo: MeetingsRepository, options: AppOptions = {}): express.Express {
   const app = express();
   app.use(express.json());
   app.use(createRoutes(repo));
