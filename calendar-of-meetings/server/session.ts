@@ -1,11 +1,11 @@
 import type { RequestHandler } from 'express';
+import type { components } from './contract.gen.js';
 
-/** Сессия — то, что подписано в httpOnly-cookie и определяет доступ (Q9). */
-export interface Session {
-  role: 'admin' | 'guest';
-  /** Имя записывающегося; у админа его нет (Q4). */
-  bookerName: string | null;
-}
+/**
+ * Сессия — то, что подписано в httpOnly-cookie и определяет доступ (Q9).
+ * Тип приходит из контракта (contract/main.tsp, K1); здесь только alias.
+ */
+export type Session = components['schemas']['Session'];
 
 // Модульная аугментация: только типы, в рантайме ничего не появляется
 // (erasableSyntaxOnly допускает declare module).

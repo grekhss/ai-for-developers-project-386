@@ -6,9 +6,10 @@
 
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
 
-Проверено на: 19 файлов в `src/`, 9 файлов в `server/`, 62 теста в 9 файлах,
+Проверено на: 20 файлов в `src/`, 12 файлов в `server/`, 81 тест в 10 файлах,
 `npm run check` и `npm run build` зелёные. Стек: React 19, Mantine 9.6.3, dayjs,
-TypeScript 6 со `strict`, Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12.
+TypeScript 6 со `strict`, Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12,
+TypeSpec 1.11.
 
 ## 1. Что это
 
@@ -69,7 +70,9 @@ Mantine, ни от его внутреннего устройства.
 `rootDir: server` закрывает импорт из `src/` — варианта протечь доменное правило
 на сервер нет, что и держит инвариант «домен не дублируется» (§9). Граница между
 сторонами — контракт §4; на фронте ему отвечает одна реализация (`http.ts`),
-на сервере — `routes.ts` + `repository.ts`.
+на сервере — `routes.ts` + `repository.ts`. Контракт описан декларативно в
+`contract/main.tsp` и генерируется в обе стороны (K1, ADR-0004); `rootDir` при
+этом не трогается — серверная копия лежит внутри `server/`.
 
 **Домен не дублируется.** «Можно ли в этот день записаться» — это
 `lib/date.ts:34` (`isBookable`), а не проверка внутри компонента. «Как написать
@@ -80,7 +83,19 @@ Mantine, ни от его внутреннего устройства.
 
 ## 4. Контракты
 
-Все даты и времена — **строки**, не `Date`-объекты (`src/lib/meetings/types.ts:7`):
+Контракт API **декларативный и единый**: `contract/main.tsp` (TypeSpec, K1/ADR-0004) —
+единственный источник истины. Из него генерируются `contract/openapi.yaml` и две
+TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`); `src/lib/meetings/types.ts`,
+`server/types.ts`, `Session` и `LoginInput` — alias'ы на генерат, ручных дублей больше нет.
+Копии две, а не одна общая, потому что `rootDir: server` закрывает серверу импорт из
+`src/` (§3): копия лежит внутри `server/`, инвариант сохранён. Контракт описывает формат
+и схему, не домен — серверный `validate.ts` остаётся ручным (§7-3).
+
+Ручки API (все `/api`, кроме входа, — за сессионной cookie `session`):
+`POST /login` (200/400/401), `POST /logout` (204), `GET /me` (200/401),
+`GET /meetings` (200/400/401), `POST /meetings` (201/400/401/409).
+
+Все даты и времена — **строки**, не `Date`-объекты (`contract/main.tsp`, модель `Meeting`):
 
 ```ts
 Meeting    { id: string; date: 'YYYY-MM-DD'; time: 'HH:mm' }
@@ -174,6 +189,7 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 | Задача | Что менять |
 | --- | --- |
 | Смена хранилища/формата на сервере | Весь сервер за `MeetingsApi` фронта: `meetingsApi` уже указывает на `createHttpMeetingsApi()` (`api.ts:19`); дальше трогается только `server/`. |
+| Новая ручка или поле API | `contract/main.tsp` + `npm run contract`: типы приезжают на обе стороны, `rootDir` не трогается, дрейф ловит `contract:check`. |
 | Доменная валидация на сервере (2-й клиент, публичный API) | Сейчас сервер проверяет только формат (§7-3). Правила (`isBookable`, сетка слотов) вынести в общий модуль и звать из `server/validate.ts`; UI продолжит пользоваться `lib/`. |
 | Праздники, дни без свободных слотов | `lib/date.ts:34` `isBookable`. |
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
@@ -207,9 +223,10 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-62 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useMeetings` 6,
-`MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 5,
-`routes` 8. Фронтовые тесты колоцированы в `src/`, поэтому `tsc -b` проверяет их
+81 тест: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useMeetings` 6,
+`MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 10,
+`routes` 19, `contract` 3 (охранитель артефактов контракта). Фронтовые тесты
+колоцированы в `src/`, поэтому `tsc -b` проверяет их
 типы бесплатно; серверные проверяет `tsc -p tsconfig.server.json --noEmit`.
 
 Vitest разведён на два проекта в `vite.config.ts`: `app` (jsdom + `setup.ts`,
@@ -260,6 +277,9 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
       свой `api` (своё хранилище вместо модульного синглтона).
 - [ ] `server/` не импортирует из `src/` (`rootDir: server`); импорты внутри —
       с `.js`-суффиксом (nodenext).
+- [ ] `.gen.ts` и `contract/openapi.yaml` не правятся руками: правка идёт в
+      `contract/main.tsp`, затем `npm run contract`; дрейф роняет `contract:check`
+      (входит в `npm run check`).
 - [ ] Сервер не дублирует доменные правила: только формат (§7-3), константы
       слотов в `server/` не заводим.
 - [ ] Каждый новый тест проверен мутацией.
@@ -270,8 +290,9 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
 ## 10. Проверки
 
 ```bash
-npm run check   # oxlint && tsc -b && tsc -p tsconfig.server.json --noEmit && vitest run
-npm run build   # tsc -b && vite build && tsc -p tsconfig.server.build.json — dist/ и dist-server/
+npm run check   # contract:check && oxlint && tsc -b && tsc -p tsconfig.server.json --noEmit && vitest run
+npm run build   # npm run contract && tsc -b && vite build && tsc -p tsconfig.server.build.json — dist/ и dist-server/
+npm run contract  # tsp compile + TS-копии из contract/main.tsp (после правки контракта; нужен и перед build)
 npm start       # node dist-server/index.js — только после build; API + статика из dist/
 npm run dev     # vite + сервер (concurrently); сервер отдельно — npm run dev:server
 npm run lint    # линтер отдельно

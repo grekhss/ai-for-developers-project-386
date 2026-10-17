@@ -1,19 +1,15 @@
-/**
- * Формы записи, которыми сервер обменивается с клиентом. Это структурная копия
- * контракта из src/lib/meetings/types.ts: импорт из src/ закрыт rootDir: server,
- * а доменные правила сюда не входят (см. ARCHITECTURE §9).
- */
-export interface Meeting {
-  /** Идентификатор, присваиваемый базой данных. */
-  id: string;
-  /** День встречи, 'YYYY-MM-DD'. */
-  date: string;
-  /** Начало встречи, 'HH:mm'. */
-  time: string;
-}
+import type { components } from './contract.gen.js';
 
+/**
+ * Типы контракта сервера — alias'ы из сгенерированного файла (K1, ADR-0004).
+ * openapi-typescript отдаёт модели как components['schemas'][...], поэтому
+ * здесь alias'ы, а не re-export имён. Источник истины — contract/main.tsp;
+ * руками не правится, правка идёт там с последующим `npm run contract`.
+ * Session и LoginInput берут типы оттуда же — в server/session.ts и
+ * server/validate.ts.
+ */
+
+/** Запись на встречу. Дата и время — строки 'YYYY-MM-DD' и 'HH:mm'. */
+export type Meeting = components['schemas']['Meeting'];
 /** Данные новой записи — всё, кроме идентификатора. */
-export interface MeetingDraft {
-  date: string;
-  time: string;
-}
+export type MeetingDraft = components['schemas']['MeetingDraft'];

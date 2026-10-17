@@ -1,26 +1,15 @@
+import type { components } from '../contract.gen.ts';
+
 /**
- * Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
- * Mantine: 'YYYY-MM-DD' и 'HH:mm'. Строки, а не Date, ещё и потому, что
- * new Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных
- * часовых поясах показывает предыдущий день.
+ * Типы контракта — alias'ы из сгенерированного файла (K1, ADR-0004).
+ * openapi-typescript отдаёт модели как components['schemas'][...], поэтому
+ * здесь alias'ы, а не re-export имён. Источник истины — contract/main.tsp;
+ * руками не правится, правка идёт там с последующим `npm run contract`.
  */
-export interface Meeting {
-  /** Идентификат, присваиваемый сервером. */
-  id: string;
-  /** День встречи, 'YYYY-MM-DD'. */
-  date: string;
-  /** Начало встречи, 'HH:mm'. */
-  time: string;
-}
 
+/** Запись на встречу. Дата и время — строки 'YYYY-MM-DD' и 'HH:mm'. */
+export type Meeting = components['schemas']['Meeting'];
 /** Данные новой записи — всё, кроме идентификатора. */
-export interface MeetingDraft {
-  date: string;
-  time: string;
-}
-
+export type MeetingDraft = components['schemas']['MeetingDraft'];
 /** Полуинтервал дат для запроса списка записей, обе границы включительно. */
-export interface DateRange {
-  from: string;
-  to: string;
-}
+export type DateRange = components['schemas']['DateRange'];

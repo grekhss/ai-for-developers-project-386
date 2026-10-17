@@ -1,4 +1,8 @@
+import type { components } from './contract.gen.js';
 import type { MeetingDraft } from './types.js';
+
+/** Данные входа — тип приходит из контракта (contract/main.tsp, K1). */
+export type LoginInput = components['schemas']['LoginInput'];
 
 /** Формат даты: '2026-10-10'. */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -28,12 +32,6 @@ export function isValidDraft(body: unknown): body is MeetingDraft {
 export function isValidRange(query: Record<string, unknown>): query is { from: string; to: string } {
   const { from, to } = query;
   return typeof from === 'string' && typeof to === 'string' && DATE_RE.test(from) && DATE_RE.test(to);
-}
-
-/** Данные входа: пароль обязателен непустая строка, имя гостя — опциональная строка. */
-export interface LoginInput {
-  password: string;
-  bookerName?: string;
 }
 
 export function isValidLogin(body: unknown): body is LoginInput {
