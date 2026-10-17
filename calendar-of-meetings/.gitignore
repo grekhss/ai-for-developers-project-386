@@ -12,6 +12,8 @@ dist
 dist-server
 dist-ssr
 data/
+# Секреты окружения (создаётся из .env.example); сам .env.example — коммитится.
+.env
 *.local
 
 # Editor directories and files
