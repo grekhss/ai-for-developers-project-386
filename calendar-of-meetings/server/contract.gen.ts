@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/admin/meetings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Все запланированные встречи одним списком: сегодня и будущее, по возрастанию
+         *     (date, time), без 14-дневного горизонта. Только админ (C5). (S4)
+         */
+        get: operations["listPlannedMeetings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/login": {
         parameters: {
             query?: never;
@@ -33,7 +53,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Выход: сессионная cookie очищается, тела нет. */
+        /** @description Выход: сессионная cookie очищается, тела нет. Без сессии — 401. */
         post: operations["logout"];
         delete?: never;
         options?: never;
@@ -58,6 +78,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/meeting-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Список типов встреч. Гость видит только активные, админ — все (Q2/Q7). (S3) */
+        get: operations["listMeetingTypes"];
+        put?: never;
+        /** @description Создание типа встречи. Только админ. (S3) */
+        post: operations["createMeetingType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meeting-types/{id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Деактивация типа; удаления нет (Q7). Только админ. (S3) */
+        post: operations["deactivateMeetingType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/meetings": {
         parameters: {
             query?: never;
@@ -69,7 +124,8 @@ export interface paths {
         get: operations["listMeetings"];
         put?: never;
         /**
-         * @description Создание записи. Уже занятый слот — 409 (UNIQUE(date, time) в базе).
+         * @description Создание записи. Формат — 400; занятый слот — 409 (UNIQUE(date, time) в базе).
+         *     Выбор несуществующего/деактивированного типа — тоже 400 (S5, C1).
          *     Возвращает запись с присвоенным id.
          */
         post: operations["createMeeting"];
@@ -122,6 +178,42 @@ export interface components {
             /** @description Начало встречи, 'HH:mm'. */
             time: string;
         };
+        /**
+         * @description Тип встречи, предлагаемый администратором (Q2). Длительность не моделируется —
+         *     на сетку слотов она не влияет. Удаления нет: деактивация — единственный конец
+         *     жизненного цикла (Q7).
+         */
+        MeetingType: {
+            /** @description Идентификатор, присваиваемый базой данных. */
+            id: string;
+            /** @description Название типа — непустая строка. */
+            name: string;
+            /** @description Описание типа. */
+            description: string;
+            /** @description Активен ли тип: деактивированный нельзя выбрать при новой записи (Q7). */
+            active: boolean;
+        };
+        /** @description Данные нового типа встречи — всё, кроме идентификатора и признака активности. */
+        MeetingTypeDraft: {
+            /** @description Название типа — непустая строка. */
+            name: string;
+            /** @description Описание типа. */
+            description: string;
+        };
+        /**
+         * @description Строка админского списка запланированных встреч: LEFT JOIN, поэтому у старых
+         *     «нетипизированных» записей `type` и `booker` равны null (C5).
+         */
+        PlannedMeeting: {
+            /** @description День встречи, 'YYYY-MM-DD'. */
+            date: string;
+            /** @description Начало встречи, 'HH:mm'. */
+            time: string;
+            /** @description Название типа встречи; null у старой записи без типа. */
+            type: string | null;
+            /** @description Имя записавшегося; null у старой записи без booker. */
+            booker: string | null;
+        };
         /** @description Сессия — то, что подписано в httpOnly-cookie `session` и определяет доступ. */
         Session: {
             /** @enum {string} */
@@ -138,6 +230,44 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listPlannedMeetings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Все запланированные встречи для админа (S4): сегодня и будущее, без горизонта. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannedMeeting"][];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Нет прав: сессия есть, но роль не admin (T2). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -196,6 +326,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getCurrentSession: {
@@ -214,6 +353,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listMeetingTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingType"][];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createMeetingType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeetingTypeDraft"];
+            };
+        };
+        responses: {
+            /** @description The request has succeeded and a new resource has been created as a result. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingType"];
+                };
+            };
+            /** @description The server could not understand the request due to invalid syntax. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Нет прав: сессия есть, но роль не admin (T2). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deactivateMeetingType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingType"];
+                };
+            };
+            /** @description The server could not understand the request due to invalid syntax. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Нет прав: сессия есть, но роль не admin (T2). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -241,6 +518,24 @@ export interface operations {
                     "application/json": components["schemas"]["Meeting"][];
                 };
             };
+            /** @description The server could not understand the request due to invalid syntax. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     createMeeting: {
@@ -263,6 +558,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Meeting"];
+                };
+            };
+            /** @description The server could not understand the request due to invalid syntax. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description The request conflicts with the current state of the server. */
