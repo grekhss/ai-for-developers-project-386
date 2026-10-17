@@ -18,8 +18,13 @@ rm -rf "$tmp"
 npx tsp compile contract --output-dir "$tmp" >/dev/null
 npx openapi-typescript "$tmp/@typespec/openapi3/openapi.yaml" -o "$tmp/contract.gen.ts" >/dev/null
 
+# SDK фронта генерируется из contract/openapi.yaml: дрейф самой спеки по main.tsp
+# ловит первый diff ниже, поэтому лишний ввод здесь не нужен.
+API_GEN_OUT="$tmp/api-gen" npx openapi-ts >/dev/null
+
 diff -u contract/openapi.yaml "$tmp/@typespec/openapi3/openapi.yaml"
 diff -u src/lib/contract.gen.ts "$tmp/contract.gen.ts"
 diff -u server/contract.gen.ts "$tmp/contract.gen.ts"
+diff -ru src/lib/api-gen "$tmp/api-gen"
 
 echo "contract:check — артефакты совпадают с contract/main.tsp"

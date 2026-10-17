@@ -1,83 +1,113 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHttpMeetingsApi } from './http.ts';
 
-/** Ответ, похожий на fetch-Response настолько, насколько клиент его использует. */
-function fakeResponse(status: number, body: unknown) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  };
+/**
+ * jsdom не даёт своего Request — глобальным остаётся node'овский (undici), а он
+ * требует абсолютный URL, тогда как браузер резолвит относительный от location.
+ * Без шима каждый запрос с пустым baseUrl падал бы в `new Request('/api/…')`,
+ * не дойдя до fetch. Шим добавляет только ту основу, которую в браузере даёт
+ * location: поведение тестируемого кода он не меняет.
+ */
+const TEST_ORIGIN = 'http://localhost';
+const RealRequest = globalThis.Request;
+
+class BrowserRequest extends RealRequest {
+  constructor(input: RequestInfo | URL, init?: RequestInit) {
+    super(
+      typeof input === 'string' && input.startsWith('/') ? `${TEST_ORIGIN}${input}` : input,
+      init,
+    );
+  }
 }
 
-function stubFetch(
-  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<unknown>,
-) {
+function stubFetch(handler: (input: RequestInfo | URL) => Promise<Response>) {
   const fetchMock = vi.fn(handler);
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
 
+/** Ответ сервера с JSON-телом: ровно то, что умеет читать клиент SDK. */
+function jsonResponse(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 describe('createHttpMeetingsApi', () => {
+  beforeEach(() => {
+    vi.stubGlobal('Request', BrowserRequest);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it('list ходит GET /api/meetings с query из DateRange и парсит ответ', async () => {
-    let capturedUrl = '';
+    let captured: Request | undefined;
     stubFetch(async (input) => {
-      capturedUrl = String(input);
-      return fakeResponse(200, [{ id: '1', date: '2026-01-01', time: '09:00' }]);
+      captured = input as Request;
+      return jsonResponse(200, [{ id: '1', date: '2026-01-01', time: '09:00' }]);
     });
 
-    const meetings = await createHttpMeetingsApi().list({
-      from: '2026-01-01',
-      to: '2026-12-31',
-    });
+    const meetings = await createHttpMeetingsApi().list({ from: '2026-01-01', to: '2026-12-31' });
 
-    expect(capturedUrl).toBe('/api/meetings?from=2026-01-01&to=2026-12-31');
+    // baseUrl по умолчанию пуст, поэтому путь уходит относительным (шнурует шим)
+    expect(captured?.url).toBe(`${TEST_ORIGIN}/api/meetings?from=2026-01-01&to=2026-12-31`);
     expect(meetings).toEqual([{ id: '1', date: '2026-01-01', time: '09:00' }]);
   });
 
   it('baseUrl подставляется перед путём', async () => {
-    let capturedUrl = '';
+    let captured: Request | undefined;
     stubFetch(async (input) => {
-      capturedUrl = String(input);
-      return fakeResponse(200, []);
+      captured = input as Request;
+      return jsonResponse(200, []);
     });
 
-    await createHttpMeetingsApi('http://api.test').list({
-      from: '2026-01-01',
-      to: '2026-01-02',
-    });
+    await createHttpMeetingsApi('http://api.test').list({ from: '2026-01-01', to: '2026-01-02' });
 
-    expect(capturedUrl).toBe('http://api.test/api/meetings?from=2026-01-01&to=2026-01-02');
+    expect(captured?.url).toBe('http://api.test/api/meetings?from=2026-01-01&to=2026-01-02');
   });
 
   it('create уходит POST с Content-Type: application/json и JSON-телом', async () => {
-    let capturedInit: RequestInit | undefined;
-    stubFetch(async (_input, init) => {
-      capturedInit = init;
-      return fakeResponse(201, { id: '2', date: '2026-01-02', time: '10:00' });
+    let captured: Request | undefined;
+    stubFetch(async (input) => {
+      captured = input as Request;
+      return jsonResponse(201, { id: '2', date: '2026-01-02', time: '10:00' });
     });
 
     const meeting = await createHttpMeetingsApi().create({ date: '2026-01-02', time: '10:00' });
 
     // Регрессия: без заголовка каждый POST вернул бы 400 от express.json().
-    expect(capturedInit?.method).toBe('POST');
-    expect(capturedInit?.headers).toEqual({ 'Content-Type': 'application/json' });
-    expect(capturedInit?.body).toBe(JSON.stringify({ date: '2026-01-02', time: '10:00' }));
+    expect(captured?.method).toBe('POST');
+    expect(captured?.headers.get('Content-Type')).toBe('application/json');
+    expect(await captured?.text()).toBe(JSON.stringify({ date: '2026-01-02', time: '10:00' }));
     expect(meeting).toEqual({ id: '2', date: '2026-01-02', time: '10:00' });
   });
 
-  it('create бросает при 400 и 409 (дубль слота)', async () => {
+  it('клиент шлёт credentials: include — без них cookie-сессия не уйдёт (D3)', async () => {
+    let captured: Request | undefined;
+    stubFetch(async (input) => {
+      captured = input as Request;
+      return jsonResponse(200, []);
+    });
+
+    await createHttpMeetingsApi().list({ from: '2026-01-01', to: '2026-01-02' });
+
+    expect(captured?.credentials).toBe('include');
+  });
+
+  it('create бросает при 400 и 409 (дубль слота) с прежним русским текстом', async () => {
     const api = createHttpMeetingsApi();
 
     for (const status of [400, 409]) {
-      stubFetch(async () => fakeResponse(status, { error: 'nope' }));
+      stubFetch(async () => jsonResponse(status, { error: 'нет свободного слота' }));
 
-      await expect(api.create({ date: '2026-01-02', time: '10:00' })).rejects.toThrow();
-      vi.unstubAllGlobals();
+      // Сообщение, а не просто «бросает»: иначе тест проходит и на постороннем
+      // исключении — так и было поймано, пока URL не чинился.
+      await expect(api.create({ date: '2026-01-02', time: '10:00' })).rejects.toThrow(
+        `POST /api/meetings вернул ${status}`,
+      );
     }
   });
 
