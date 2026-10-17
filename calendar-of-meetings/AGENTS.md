@@ -18,7 +18,7 @@ npm 10 locally.
 | Lint | `npm run lint` |
 | Lint + autofix safe fixes | `npm run lint:fix` |
 | Lint language server (for editors) | `npm run lint:lsp` |
-| Контракт API → `contract/openapi.yaml` + TS-копии | `npm run contract` |
+| Контракт API → `contract/openapi.yaml` + TS-копии (с самопроверкой дрейфа) | `npm run contract` |
 | Проверка дрейфа артефактов контракта | `npm run contract:check` (входит в `check`) |
 | Tests (single run) | `npm test` |
 | Tests (watch mode) | `npm run test:watch` |
@@ -203,6 +203,16 @@ Overflow answers, and your own priors. Verified against
 - **`contract:check` (в `check`) ловит дрейф**: генерирует во временный каталог и делает
   `diff` с закоммиченными артефактами. Правил `.tsp` — сначала `npm run contract`, потом
   гейт; ручная правка `.gen.ts`/`openapi.yaml` гейт роняет.
+- **`npm run contract` — единая самопроверяющаяся команда** (D5/ADR-0005): генерирует спеку
+  и обе TS-копии, а в конце зовёт `contract/check.sh`, который то же самое перегенерирует во
+  временный каталог и сверит — так успешный прогон гарантирует и свежесть, и детерминизм.
+  Скрипта `contract:types` больше нет: ступени живут в `contract/generate.sh`. Новый
+  генератор (клиентский SDK — K3, JSON Schema — K4) добавляется ступенью в `generate.sh`
+  **и** диффом в `check.sh` — иначе он не попадёт в самопроверку.
+- **В спеке есть ещё не реализованные ручки** (`/api/meeting-types`,
+  `/api/meeting-types/{id}/deactivate`, `/api/admin/meetings` — S3/S4): контракт намеренно
+  идёт впереди сервера, чтобы SDK (K3) собрал их до реализации. Их статус-коды и присутствие
+  держит `server/contract.test.ts`, который сверяет каждую операцию с обязательным набором кодов.
 - **`tsp-output/`** — промежуточный выход `tsp compile`, в `.gitignore`; `npm run contract`
   переносит спеку в `contract/openapi.yaml`.
 
@@ -275,8 +285,9 @@ calendar-of-meetings/
 ├── .oxlintrc.json
 ├── .npmrc                  # legacy-peer-deps=true — причина в «API-контракт (TypeSpec)»
 ├── contract/               # TypeSpec: единственный источник истины контракта API
-│   ├── main.tsp            # модели и ручки всего API; правка только здесь
+│   ├── main.tsp            # модели и ручки всего API (включая планируемые); правка только здесь
 │   ├── tspconfig.yaml      # emit @typespec/openapi3
+│   ├── generate.sh         # npm run contract: генерация всех семейств + самопроверка
 │   ├── check.sh            # contract:check: генерация во временный каталог + diff
 │   └── openapi.yaml        # сгенерированная спека (коммитится, не править)
 ├── tsconfig.json           # project references only

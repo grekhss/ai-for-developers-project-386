@@ -6,7 +6,7 @@
 
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
 
-Проверено на: 20 файлов в `src/`, 12 файлов в `server/`, 81 тест в 10 файлах,
+Проверено на: 20 файлов в `src/`, 12 файлов в `server/`, 82 теста в 10 файлах,
 `npm run check` и `npm run build` зелёные. Стек: React 19, Mantine 9.6.3, dayjs,
 TypeScript 6 со `strict`, Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12,
 TypeSpec 1.11.
@@ -91,9 +91,17 @@ TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`); `src/lib/me
 `src/` (§3): копия лежит внутри `server/`, инвариант сохранён. Контракт описывает формат
 и схему, не домен — серверный `validate.ts` остаётся ручным (§7-3).
 
-Ручки API (все `/api`, кроме входа, — за сессионной cookie `session`):
-`POST /login` (200/400/401), `POST /logout` (204), `GET /me` (200/401),
-`GET /meetings` (200/400/401), `POST /meetings` (201/400/401/409).
+Ручки API (все `/api`, кроме входа, — за сессионной cookie `session`): `POST /login`
+(200/400/401), `POST /logout` (204/401), `GET /me` (200/401), `GET /meetings`
+(200/400/401), `POST /meetings` (201/400/401/409). Админские ручки дополнительно
+требуют роль admin — иначе 403.
+
+В спеке описаны и **ещё не реализованные ручки** (K2/D5): `GET /api/meeting-types`,
+`POST /api/meeting-types`, `POST /api/meeting-types/{id}/deactivate` (S3) и
+`GET /api/admin/meetings` (S4). Контракт намеренно идёт впереди сервера, чтобы
+клиентский SDK (K3) собрал их до реализации. Каждую операцию со стороны спеки
+держит `server/contract.test.ts` (обязательный набор статус-кодов), а соответствие
+`.tsp` — `contract:check`.
 
 Все даты и времена — **строки**, не `Date`-объекты (`contract/main.tsp`, модель `Meeting`):
 
@@ -223,9 +231,9 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-81 тест: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useMeetings` 6,
+82 теста: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 5, `useMeetings` 6,
 `MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 10,
-`routes` 19, `contract` 3 (охранитель артефактов контракта). Фронтовые тесты
+`routes` 19, `contract` 4 (охранитель артефактов и статус-кодов контракта). Фронтовые тесты
 колоцированы в `src/`, поэтому `tsc -b` проверяет их
 типы бесплатно; серверные проверяет `tsc -p tsconfig.server.json --noEmit`.
 
@@ -292,7 +300,7 @@ Vitest разведён на два проекта в `vite.config.ts`: `app` (j
 ```bash
 npm run check   # contract:check && oxlint && tsc -b && tsc -p tsconfig.server.json --noEmit && vitest run
 npm run build   # npm run contract && tsc -b && vite build && tsc -p tsconfig.server.build.json — dist/ и dist-server/
-npm run contract  # tsp compile + TS-копии из contract/main.tsp (после правки контракта; нужен и перед build)
+npm run contract  # generate.sh: спека + TS-копии + самопроверка дрейфа (после правки контракта; нужен и перед build)
 npm start       # node dist-server/index.js — только после build; API + статика из dist/
 npm run dev     # vite + сервер (concurrently); сервер отдельно — npm run dev:server
 npm run lint    # линтер отдельно
