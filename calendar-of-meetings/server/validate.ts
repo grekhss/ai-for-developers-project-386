@@ -29,3 +29,16 @@ export function isValidRange(query: Record<string, unknown>): query is { from: s
   const { from, to } = query;
   return typeof from === 'string' && typeof to === 'string' && DATE_RE.test(from) && DATE_RE.test(to);
 }
+
+/** Данные входа: пароль обязателен непустая строка, имя гостя — опциональная строка. */
+export interface LoginInput {
+  password: string;
+  bookerName?: string;
+}
+
+export function isValidLogin(body: unknown): body is LoginInput {
+  if (typeof body !== 'object' || body === null) return false;
+  const input = body as Record<string, unknown>;
+  if (typeof input.password !== 'string' || input.password.trim() === '') return false;
+  return input.bookerName === undefined || typeof input.bookerName === 'string';
+}
