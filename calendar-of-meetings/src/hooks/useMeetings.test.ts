@@ -95,7 +95,7 @@ describe('useMeetings', () => {
     await waitFor(() => expect(result.current.error).not.toBeNull());
   });
 
-  it('запрашивает записи начиная с сегодняшнего дня', async () => {
+  it('запрашивает записи в границах гостевого окна — с сегодняшнего дня до дня+13', async () => {
     const list = vi.fn<(range: DateRange) => Promise<Meeting[]>>(() => Promise.resolve([]));
     const api: MeetingsApi = { list, create: () => Promise.reject(new Error('не вызывается')) };
 
@@ -106,6 +106,8 @@ describe('useMeetings', () => {
     const range = list.mock.calls[0]?.[0];
 
     expect(range?.from).toBe(today());
-    expect(range?.to > range.from).toBe(true);
+    // Верхняя граница пересчитывается здесь независимо от lib/window.ts:
+    // 90-дневный горизонт (HORIZON_DAYS) заменён на окно Q5 (14 дней).
+    expect(range?.to).toBe(dayjs().add(13, 'day').format('YYYY-MM-DD'));
   });
 });
