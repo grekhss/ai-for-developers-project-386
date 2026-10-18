@@ -127,7 +127,8 @@ npm 10 locally.
   generated SDK builds `new Request('/api/…')` internally, so any test calling
   `createHttpMeetingsApi()` dies with `ERR_INVALID_URL` before `fetch` runs (this
   is how the vacuously green "create бросает при 400 и 409" was caught). Keep the
-  `BrowserRequest` shim in `http.test.ts`, which prepends the origin a browser
+  `BrowserRequest` shim in `http.test.ts` (both `lib/meetings/` and
+  `lib/meeting-types/` carry their own copy), which prepends the origin a browser
   would add; tests that stub `fetch` should inspect the `Request` they receive —
   `url`, `method`, `headers`, `await text()`, `credentials` — rather than a
   `RequestInit` second argument, because the SDK calls `fetch(request)` with one
@@ -294,8 +295,9 @@ Overflow answers, and your own priors. Verified against
 - **`react/set-state-in-effect` is an error, and it is transitive:** calling a
   function that touches `setState` from an effect body is flagged *even if the
   `setState` happens after an `await`*. So a "load on mount" effect can't call
-  the hook's own `refresh` — see the inlined `load` in `useMeetings.ts` for the
-  accepted shape. Don't "simplify" it back into `void refresh()`.
+  the hook's own `refresh` — see the inlined `load` in `useMeetings.ts`
+  (mirrored in `useMeetingTypes.ts`) for the accepted shape. Don't "simplify"
+  it back into `void refresh()`.
 - **`strict` is on** in `tsconfig.app.json` (enabled 2026-10-03, so don't assume
   the stock Vite template's laxer defaults). Nullable date/time state — the bulk
   of this app — is checked, so expect `string | null` to be narrowed explicitly
@@ -382,7 +384,9 @@ calendar-of-meetings/
     │   └── MeetingCalendar.tsx  # the only component that renders date selection
     ├── hooks/              # React state around lib; the only place with useState
     │   ├── useMeetings.ts  # load/create meetings; takes a MeetingsApi so tests inject a fake
-    │   └── useMeetings.test.ts
+    │   ├── useMeetings.test.ts
+    │   ├── useMeetingTypes.ts  # load/create/deactivate meeting types; same injection seam
+    │   └── useMeetingTypes.test.ts
     ├── lib/                # framework-free domain code, unit-tested beside itself
     │   ├── contract.gen.ts # сгенерированные TS-типы контракта (не править)
     │   ├── api-gen/        # сгенерированный клиентский SDK hey-api (не править)
@@ -390,12 +394,19 @@ calendar-of-meetings/
     │   ├── date.test.ts
     │   ├── slots.ts        # generateTimeSlots — workday bounds and slot length
     │   ├── slots.test.ts
-    │   └── meetings/
-    │       ├── types.ts    # alias'ы Meeting/MeetingDraft/DateRange из contract.gen.ts
-    │       ├── api.ts      # MeetingsApi interface + the instance the app uses (HTTP)
-    │       ├── http.ts     # createHttpMeetingsApi — адаптер SDK из api-gen на /api/meetings
+    │   ├── meetings/
+    │   │   ├── types.ts    # alias'ы Meeting/MeetingDraft/DateRange из contract.gen.ts
+    │   │   ├── api.ts      # MeetingsApi interface + the instance the app uses (HTTP)
+    │   │   ├── http.ts     # createHttpMeetingsApi — адаптер SDK из api-gen на /api/meetings
+    │   │   ├── http.test.ts
+    │   │   ├── inMemory.ts # тестовая фабрика/fake (createInMemoryMeetingsApi)
+    │   │   └── inMemory.test.ts
+    │   └── meeting-types/  # зеркало meetings/ (F3); модули не зависят друг от друга
+    │       ├── types.ts    # alias'ы MeetingType/MeetingTypeDraft из contract.gen.ts
+    │       ├── api.ts      # MeetingTypesApi interface + the instance the app uses (HTTP)
+    │       ├── http.ts     # createHttpMeetingTypesApi — адаптер SDK на /api/meeting-types
     │       ├── http.test.ts
-    │       ├── inMemory.ts # тестовая фабрика/fake (createInMemoryMeetingsApi)
+    │       ├── inMemory.ts # createInMemoryMeetingTypesApi; list() копирует элементы — см. ниже
     │       └── inMemory.test.ts
     └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup (app-проект vitest)
 ```
@@ -408,7 +419,8 @@ other.
 
 **Three layers:** `lib/` holds pure functions and types with no React and no
 Mantine imports; `components/` renders; `hooks/` is the only place that owns
-React state and the only bridge between `components/` and `lib/meetings/api.ts`.
+React state and the only bridge between `components/` and the `api.ts` modules
+(`lib/meetings/`, `lib/meeting-types/`).
 Domain rules and date formatting live in `lib/` and are duplicated nowhere — if
 a second component needs "is this a bookable day?" or "how do we spell a date in
 Russian?", it imports from `lib/`, it does not re-derive it. Keep
@@ -430,12 +442,22 @@ animation) and takes `date: string | null` where `null` means closed — no `key
 remount, no local `useState` for the slot. `takenTimes` comes from the meetings
 for that date, which is what makes a booked slot unselectable on reopen.
 
-**Data access goes through `MeetingsApi`** (`lib/meetings/api.ts`), never
-straight to a concrete implementation. `api.ts` holds the interface *and* the
-instance the app uses, so switching to HTTP is a one-line change there;
-components and hooks only see the interface. Hooks take the API as a parameter
-with that instance as the default, which is how tests inject a fake without
-`vi.mock`.
+**Data access goes through the `api.ts` interfaces** (`lib/meetings/api.ts`,
+`lib/meeting-types/api.ts`), never straight to a concrete implementation. Each
+`api.ts` holds the interface *and* the instance the app uses, so switching to
+HTTP is a one-line change there; components and hooks only see the interface.
+Hooks take the API as a parameter with that instance as the default, which is
+how tests inject a fake without `vi.mock`. The two module folders mirror each
+other and must not import from each other — a shared helper (e.g. the SDK
+`failure()` mapper) is deliberately duplicated per folder to keep them
+independent.
+
+**`createInMemoryMeetingTypesApi().list()` copies elements, not just the
+array** — like the HTTP adapter, which re-parses JSON per call. With shared
+element references a hook test cannot tell "the list was refreshed" from "the
+old object mutated in memory", and a hook that forgot `refresh()` after
+`deactivate` would pass (this is exactly what mutation M20 caught, F3). Keep
+the copies if you touch the fake.
 
 **Tests must not assume "today is selectable."** Past days and weekends are
 disabled by `isBookable`, so `[data-today]` is unclickable whenever today falls

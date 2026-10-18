@@ -17,8 +17,8 @@ Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 Одностраничное приложение + собственный серверный процесс: календарь встреч.
 Пользователь выбирает день, во всплывающем окне выбирает слот, запись уходит по
 HTTP на express-сервер и хранится в SQLite — поэтому переживает перезапуск, а
-дубль слота отклоняется сервером. Компоненты и хуки видят только абстракцию
-`MeetingsApi` (§4), смена реализации их не затрагивает.
+дубль слота отклоняется сервером. Компоненты и хуки видят только абстракции
+`MeetingsApi` и `MeetingTypesApi` (§4), смена реализации их не затрагивает.
 
 ## 2. Поток данных
 
@@ -44,6 +44,9 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App
         │                                 validate (формат по схеме ajv) → repository → SQLite
         │                                                           (data/meetings.sqlite)
         └─► meetings / error / loading ─► строки статуса под календарём
+
+ useMeetingTypes(api) ──► MeetingTypesApi ──► createHttpMeetingTypesApi ──► fetch /api/meeting-types
+        (загрузка, создание, деактивация типов; F3 — хук и адаптер без UI)
 ```
 
 Запросы формирует только `createHttpMeetingsApi` (`src/lib/meetings/http.ts`),
@@ -65,8 +68,8 @@ Mantine, ни от его внутреннего устройства.
 
 | Слой | Файлы | Правило |
 | --- | --- | --- |
-| `lib/` | `date.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. |
-| `hooks/` | `useMeetings.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственный мост к `MeetingsApi`. |
+| `lib/` | `date.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts`, `meeting-types/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. Модули `meetings/` и `meeting-types/` зеркалят друг друга и не зависят друг от друга. |
+| `hooks/` | `useMeetings.ts`, `useMeetingTypes.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственные мосты к `MeetingsApi` и `MeetingTypesApi`. |
 | `components/` | `MeetingCalendar.tsx`, `MeetingModal.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
 | `App.tsx` | — | Только UI-состояние и раскладка. Не импортирует `@mantine/dates`. |
 
@@ -95,7 +98,8 @@ Mantine, ни от его внутреннего устройства.
 единственный источник истины. Из него генерируются `contract/openapi.yaml`, две
 TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`) и JSON Schema
 (`contract/schema/calendar-of-meetings.json`, K4/ADR-0005); `src/lib/meetings/types.ts`,
-`server/types.ts`, `Session` и `LoginInput` — alias'ы на генерат, ручных дублей больше нет.
+`src/lib/meeting-types/types.ts`, `server/types.ts`, `Session` и `LoginInput` —
+alias'ы на генерат, ручных дублей больше нет.
 Копии TS две, а не одна общая, потому что `rootDir: server` закрывает серверу импорт из
 `src/` (§3): копия лежит внутри `server/`, инвариант сохранён.
 
@@ -140,6 +144,17 @@ DateRange  { from: 'YYYY-MM-DD'; to: 'YYYY-MM-DD' }  // обе границы в
 MeetingsApi {
   list(range: DateRange): Promise<Meeting[]>    // возрастание по (date, time)
   create(draft: MeetingDraft): Promise<Meeting> // возвращает запись с присвоенным id
+}
+
+MeetingType    { id: string; name: string; description: string; active: boolean }
+MeetingTypeDraft { name: string; description: string }  // то же без id и active
+
+MeetingTypesApi {                                // src/lib/meeting-types/ (F3), зеркало MeetingsApi
+  list(): Promise<MeetingType[]>                 // без параметров: админу — все, гостю —
+                                                 // только активные, решает сервер по сессии (S3)
+  create(draft: MeetingTypeDraft): Promise<MeetingType>   // новый тип всегда активен
+  deactivate(id: string): Promise<MeetingType>            // неизвестный id — исключение
+                                                 // (сервер отвечает 400, не 404)
 }
 ```
 
@@ -262,7 +277,8 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-103 тестов: `date.ts` 10, `slots.ts` 4, `inMemory` 7, `http` 6, `useMeetings` 6,
+124 тестов: `date.ts` 10, `slots.ts` 4, `meetings` (`inMemory` 7, `http` 6),
+`meeting-types` (`inMemory` 7, `http` 8), `useMeetings` 6, `useMeetingTypes` 6,
 `MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 10,
 `meeting-types-repository` 6, `routes` 30, `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
 роутов со спекой и порядка сеанс-гейта). Фронтовые тесты
