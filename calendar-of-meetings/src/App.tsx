@@ -1,85 +1,95 @@
 import { useState } from 'react';
-import { Container, Title, Text, Card } from '@mantine/core';
-import MeetingModal from './components/MeetingModal.tsx';
-import MeetingCalendar from './components/MeetingCalendar.tsx';
-import { useMeetings } from './hooks/useMeetings.ts';
+import { Alert, Badge, Button, Card, Container, Group, Text, Title } from '@mantine/core';
+import LoginScreen from './components/LoginScreen.tsx';
+import GuestView from './GuestView.tsx';
+import { useSession } from './hooks/useSession.ts';
+import { sessionApi as defaultSessionApi, type SessionApi } from './lib/session/api.ts';
 import { meetingsApi, type MeetingsApi } from './lib/meetings/api.ts';
-import type { MeetingDraft } from './lib/meetings/types.ts';
-import { formatDateRu } from './lib/date.ts';
+import type { LoginInput } from './lib/session/types.ts';
 
 interface AppProps {
   /** Подменяется в тестах, чтобы не делить записи между сценариями. */
   api?: MeetingsApi;
+  /** И сессия тоже через проп: тесты входа подставляют свой фейк (T6). */
+  sessionApi?: SessionApi;
 }
 
-export default function App({ api = meetingsApi }: AppProps) {
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [time, setTime] = useState<string | null>(null);
-  const [lastBooked, setLastBooked] = useState<MeetingDraft | null>(null);
-  const { meetings, loading, error, createMeeting } = useMeetings(api);
+/**
+ * Страница целиком за паролем (Q12a): пока `GET /api/me` не ответил —
+ * восстановление, без сессии — экран входа, дальше — вид по роли, которую
+ * решил сервер (Q9). Шапка с бейджем роли и «Выйти» — по D4 (вариант A).
+ */
+export default function App({ api = meetingsApi, sessionApi = defaultSessionApi }: AppProps) {
+  const { session, loading, error, login, logout } = useSession(sessionApi);
+  // Форма входа — UI-состояние страницы (как selectedDate раньше в App):
+  // значения живут, пока форма показана, и очищаются после успешного входа,
+  // чтобы пароль не дожидался пользователя на выходе.
+  const [password, setPassword] = useState('');
+  const [bookerName, setBookerName] = useState('');
+  const [guest, setGuest] = useState(false);
 
-  const takenTimes = meetings
-    .filter((meeting) => meeting.date === selectedDate)
-    .map((meeting) => meeting.time);
-
-  function closeModal() {
-    setSelectedDate(null);
-    setTime(null);
+  async function handleLogin(input: LoginInput) {
+    const signedIn = await login(input);
+    if (signedIn !== null) {
+      setPassword('');
+      setBookerName('');
+      setGuest(false);
+    }
   }
 
-  async function handleBook(draft: MeetingDraft) {
-    const created = await createMeeting(draft);
-    // Строка «Запись: …» — только при успехе: иначе при ошибке создания
-    // под календарём висели бы и красная ошибка, и синяя запись.
-    if (created !== null) setLastBooked(draft);
-    // Окно закрываем в любом случае — ошибка рендерится под модалкой.
-    closeModal();
+  if (loading) {
+    return (
+      <Container size="sm" py="xl">
+        <Text c="dimmed">Восстановление сессии…</Text>
+      </Container>
+    );
   }
+
+  if (session === null) {
+    return (
+      <LoginScreen
+        error={error}
+        password={password}
+        bookerName={bookerName}
+        guest={guest}
+        onPasswordChange={setPassword}
+        onBookerNameChange={setBookerName}
+        onGuestChange={setGuest}
+        onSubmit={handleLogin}
+      />
+    );
+  }
+
+  const isAdmin = session.role === 'admin';
 
   return (
     <Container size="sm" py="xl">
-      <Card shadow="sm" padding="lg" radius="md" withBorder>
-        <Title order={2} mb="md">Календарь встреч</Title>
-        <Text size="sm" c="dimmed" mb="lg">
-          Выберите дату для просмотра или создания события.
-        </Text>
+      <Group justify="space-between" mb="md">
+        <Title order={2}>Календарь встреч</Title>
+        <Group gap="xs">
+          {/* Бейдж лишь показывает ответ сервера: роль выбрал пароль (Q9). */}
+          <Badge color={isAdmin ? 'blue' : 'gray'}>{isAdmin ? 'Админ' : 'Гость'}</Badge>
+          <Button variant="light" size="sm" onClick={() => { void logout(); }}>
+            Выйти
+          </Button>
+        </Group>
+      </Group>
 
-        <MeetingCalendar
-          value={selectedDate}
-          onSelect={(date) => {
-            setLastBooked(null);
-            setTime(null);
-            setSelectedDate(date);
-          }}
-        />
+      {error !== null && (
+        <Alert color="red" mb="md">{error}</Alert>
+      )}
 
-        {error !== null && (
-          <Text mt="md" c="red">{error}</Text>
-        )}
-
-        {loading && (
-          <Text mt="md" c="dimmed">Загрузка записей…</Text>
-        )}
-
-        {!loading && error === null && lastBooked === null && (
-          <Text mt="md" c="dimmed">Выберите дату, чтобы посмотреть свободные слоты.</Text>
-        )}
-
-        {lastBooked !== null && (
-          <Text mt="md" c="blue">
-            Запись: {formatDateRu(lastBooked.date)}, {lastBooked.time}
+      {isAdmin ? (
+        // Админ не записывается на встречи (Q12c); содержимое панели — F6.
+        <Card shadow="sm" padding="lg" radius="md" withBorder>
+          <Text fw={500}>Админ-панель</Text>
+          <Text size="sm" c="dimmed">
+            Разделы «Типы встреч» и «Запланированные встречи» готовятся.
           </Text>
-        )}
-      </Card>
-
-      <MeetingModal
-        date={selectedDate}
-        takenTimes={takenTimes}
-        time={time}
-        onChangeTime={setTime}
-        onBook={handleBook}
-        onClose={closeModal}
-      />
+        </Card>
+      ) : (
+        <GuestView api={api} />
+      )}
     </Container>
   );
 }
