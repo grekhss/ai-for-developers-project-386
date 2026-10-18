@@ -127,8 +127,8 @@ npm 10 locally.
   generated SDK builds `new Request('/api/…')` internally, so any test calling
   `createHttpMeetingsApi()` dies with `ERR_INVALID_URL` before `fetch` runs (this
   is how the vacuously green "create бросает при 400 и 409" was caught). Keep the
-  `BrowserRequest` shim in `http.test.ts` (both `lib/meetings/` and
-  `lib/meeting-types/` carry their own copy), which prepends the origin a browser
+  `BrowserRequest` shim in `http.test.ts` (all three of `lib/meetings/`,
+  `lib/meeting-types/` and `lib/session/` carry their own copy), which prepends the origin a browser
   would add; tests that stub `fetch` should inspect the `Request` they receive —
   `url`, `method`, `headers`, `await text()`, `credentials` — rather than a
   `RequestInit` second argument, because the SDK calls `fetch(request)` with one
@@ -298,6 +298,12 @@ Overflow answers, and your own priors. Verified against
   the hook's own `refresh` — see the inlined `load` in `useMeetings.ts`
   (mirrored in `useMeetingTypes.ts`) for the accepted shape. Don't "simplify"
   it back into `void refresh()`.
+- **Domain date rules never read the clock (T3).** `isPast`/`isBookable` take a
+  `moment: string` parameter, and `lib/window.ts` (`WINDOW_DAYS`, `windowEnd`,
+  `isBookableDay`, `isBookableSlot` — гостевое окно Q5) composes them without
+  re-deriving weekend/past rules. Only `today()`/`now()` in `lib/date.ts` read
+  system time, and call sites pass their results in — so tests inject a fixed
+  `'YYYY-MM-DD HH:mm'` string instead of using `vi.setSystemTime`.
 - **`strict` is on** in `tsconfig.app.json` (enabled 2026-10-03, so don't assume
   the stock Vite template's laxer defaults). Nullable date/time state — the bulk
   of this app — is checked, so expect `string | null` to be narrowed explicitly
@@ -386,12 +392,16 @@ calendar-of-meetings/
     │   ├── useMeetings.ts  # load/create meetings; takes a MeetingsApi so tests inject a fake
     │   ├── useMeetings.test.ts
     │   ├── useMeetingTypes.ts  # load/create/deactivate meeting types; same injection seam
-    │   └── useMeetingTypes.test.ts
+    │   ├── useMeetingTypes.test.ts
+    │   ├── useSession.ts   # login/logout, роль + bookerName; тот же шов через параметр api
+    │   └── useSession.test.ts
     ├── lib/                # framework-free domain code, unit-tested beside itself
     │   ├── contract.gen.ts # сгенерированные TS-типы контракта (не править)
     │   ├── api-gen/        # сгенерированный клиентский SDK hey-api (не править)
-    │   ├── date.ts         # APP_LOCALE, today, isWeekend, isPast, isBookable, formatDateRu
+    │   ├── date.ts         # APP_LOCALE, today, now, addDays, isWeekend, isPast, isBookable, formatDateRu
     │   ├── date.test.ts
+    │   ├── window.ts       # гостевое окно Q5 (14 дней): WINDOW_DAYS, windowEnd, isBookableDay, isBookableSlot
+    │   ├── window.test.ts
     │   ├── slots.ts        # generateTimeSlots — workday bounds and slot length
     │   ├── slots.test.ts
     │   ├── meetings/
@@ -401,12 +411,19 @@ calendar-of-meetings/
     │   │   ├── http.test.ts
     │   │   ├── inMemory.ts # тестовая фабрика/fake (createInMemoryMeetingsApi)
     │   │   └── inMemory.test.ts
-    │   └── meeting-types/  # зеркало meetings/ (F3); модули не зависят друг от друга
-    │       ├── types.ts    # alias'ы MeetingType/MeetingTypeDraft из contract.gen.ts
-    │       ├── api.ts      # MeetingTypesApi interface + the instance the app uses (HTTP)
-    │       ├── http.ts     # createHttpMeetingTypesApi — адаптер SDK на /api/meeting-types
+    │   ├── meeting-types/  # зеркало meetings/ (F3); модули не зависят друг от друга
+    │   │   ├── types.ts    # alias'ы MeetingType/MeetingTypeDraft из contract.gen.ts
+    │   │   ├── api.ts      # MeetingTypesApi interface + the instance the app uses (HTTP)
+    │   │   ├── http.ts     # createHttpMeetingTypesApi — адаптер SDK на /api/meeting-types
+    │   │   ├── http.test.ts
+    │   │   ├── inMemory.ts # createInMemoryMeetingTypesApi; list() копирует элементы — см. ниже
+    │   │   └── inMemory.test.ts
+    │   └── session/        # зеркало meetings/ (F2); модули не зависят друг от друга
+    │       ├── types.ts    # alias'ы Session/LoginInput из contract.gen.ts
+    │       ├── api.ts      # SessionApi interface + the instance the app uses (HTTP)
+    │       ├── http.ts     # createHttpSessionApi — адаптер SDK на login/logout/me; 401 от me() → null
     │       ├── http.test.ts
-    │       ├── inMemory.ts # createInMemoryMeetingTypesApi; list() копирует элементы — см. ниже
+    │       ├── inMemory.ts # createInMemorySessionApi(seed); пароли-фикстуры 'admin'/'guest'
     │       └── inMemory.test.ts
     └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup (app-проект vitest)
 ```
@@ -420,7 +437,7 @@ other.
 **Three layers:** `lib/` holds pure functions and types with no React and no
 Mantine imports; `components/` renders; `hooks/` is the only place that owns
 React state and the only bridge between `components/` and the `api.ts` modules
-(`lib/meetings/`, `lib/meeting-types/`).
+(`lib/meetings/`, `lib/meeting-types/`, `lib/session/`).
 Domain rules and date formatting live in `lib/` and are duplicated nowhere — if
 a second component needs "is this a bookable day?" or "how do we spell a date in
 Russian?", it imports from `lib/`, it does not re-derive it. Keep
@@ -443,11 +460,12 @@ remount, no local `useState` for the slot. `takenTimes` comes from the meetings
 for that date, which is what makes a booked slot unselectable on reopen.
 
 **Data access goes through the `api.ts` interfaces** (`lib/meetings/api.ts`,
-`lib/meeting-types/api.ts`), never straight to a concrete implementation. Each
-`api.ts` holds the interface *and* the instance the app uses, so switching to
-HTTP is a one-line change there; components and hooks only see the interface.
+`lib/meeting-types/api.ts`, `lib/session/api.ts`), never straight to a concrete
+implementation. Each `api.ts` holds the interface *and* the instance the app
+uses, so switching to HTTP is a one-line change there; components and hooks
+only see the interface.
 Hooks take the API as a parameter with that instance as the default, which is
-how tests inject a fake without `vi.mock`. The two module folders mirror each
+how tests inject a fake without `vi.mock`. The three module folders mirror each
 other and must not import from each other — a shared helper (e.g. the SDK
 `failure()` mapper) is deliberately duplicated per folder to keep them
 independent.
@@ -460,7 +478,8 @@ old object mutated in memory", and a hook that forgot `refresh()` after
 the copies if you touch the fake.
 
 **Tests must not assume "today is selectable."** Past days and weekends are
-disabled by `isBookable`, so `[data-today]` is unclickable whenever today falls
+disabled by `isBookableDay` (будни в пределах гостевого окна Q5 — 14 дней от
+«сейчас»), so `[data-today]` is unclickable whenever today falls
 on a weekend (and it was, on 2026-10-03). Select "the first enabled day of the
 displayed month" (`tbody button:not([disabled])` without `data-outside`) instead,
 and page to the next month via `[data-direction="next"]` when the current one has

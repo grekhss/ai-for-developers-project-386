@@ -18,7 +18,8 @@ Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 Пользователь выбирает день, во всплывающем окне выбирает слот, запись уходит по
 HTTP на express-сервер и хранится в SQLite — поэтому переживает перезапуск, а
 дубль слота отклоняется сервером. Компоненты и хуки видят только абстракции
-`MeetingsApi` и `MeetingTypesApi` (§4), смена реализации их не затрагивает.
+`MeetingsApi`, `MeetingTypesApi` и `SessionApi` (§4), смена реализации их не
+затрагивает.
 
 ## 2. Поток данных
 
@@ -47,16 +48,22 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App
 
  useMeetingTypes(api) ──► MeetingTypesApi ──► createHttpMeetingTypesApi ──► fetch /api/meeting-types
         (загрузка, создание, деактивация типов; F3 — хук и адаптер без UI)
+
+ useSession(api) ──► SessionApi ──► createHttpSessionApi ──► fetch /api/login, /api/logout, /api/me
+        (вход/выход, роль + bookerName, восстановление из GET /api/me; F2 — хук и адаптер без UI)
 ```
 
-Запросы формирует только `createHttpMeetingsApi` (`src/lib/meetings/http.ts`),
-и делает он это через сгенерированный клиентский SDK `src/lib/api-gen` (K3,
-D5). SDK собран из того же `contract/openapi.yaml` той же командой
+Запросы формируют только адаптеры `http.ts` (`src/lib/meetings/`,
+`src/lib/meeting-types/`, `src/lib/session/`), и делают они это через
+сгенерированный клиентский SDK `src/lib/api-gen` (K3, D5). SDK собран из того же
+`contract/openapi.yaml` той же командой
 `npm run contract`, что и остальные артефакты контракта, поэтому путь, заголовки
-и тело не могут разойтись со спекой — дрейф ловит `contract:check`. Адаптер
-добавляет к вызовам SDK только то, что контракт не выражает: `credentials:
-'include'` (без него браузер не подложит session-cookie, D3) и прежние русские
-тексты ошибок; порт `MeetingsApi` и его сигнатуры не меняются. За запросами
+и тело не могут разойтись со спекой — дрейф ловит `contract:check`. Адаптеры
+добавляют к вызовам SDK только то, что контракт не выражает: `credentials:
+'include'` (без него браузер не подложит session-cookie, D3), прежние русские
+тексты ошибок; порт `MeetingsApi` и его сигнатуры не меняются. Особый случай —
+`lib/session/http.ts`: 401 от `GET /api/me` там превращается в штатное `null`
+(«сессии нет»), а не в исключение. За запросами
 стоит поток «репозиторий → SQLite», описанный в §3. В dev `/api`
 проксируется Vite на :4000, в проде express отдаёт и API, и статику из `dist/`.
 
@@ -68,8 +75,8 @@ Mantine, ни от его внутреннего устройства.
 
 | Слой | Файлы | Правило |
 | --- | --- | --- |
-| `lib/` | `date.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts`, `meeting-types/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. Модули `meetings/` и `meeting-types/` зеркалят друг друга и не зависят друг от друга. |
-| `hooks/` | `useMeetings.ts`, `useMeetingTypes.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственные мосты к `MeetingsApi` и `MeetingTypesApi`. |
+| `lib/` | `date.ts`, `window.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts`, `meeting-types/{types,api,inMemory,http}.ts`, `session/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. Модули `meetings/`, `meeting-types/` и `session/` зеркалят друг друга и не зависят друг от друга. |
+| `hooks/` | `useMeetings.ts`, `useMeetingTypes.ts`, `useSession.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственные мосты к `MeetingsApi`, `MeetingTypesApi` и `SessionApi`. |
 | `components/` | `MeetingCalendar.tsx`, `MeetingModal.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
 | `App.tsx` | — | Только UI-состояние и раскладка. Не импортирует `@mantine/dates`. |
 
@@ -86,11 +93,20 @@ Mantine, ни от его внутреннего устройства.
 этом не трогается — серверная копия лежит внутри `server/`.
 
 **Домен не дублируется.** «Можно ли в этот день записаться» — это
-`lib/date.ts:34` (`isBookable`), а не проверка внутри компонента. «Как написать
-дату по-русски» — `lib/date.ts:39` (`formatDateRu`). Если второму компоненту
-понадобится то же самое, он импортирует из `lib/`, а не переписывает правило у
-себя. Расширение правила идёт в ту же функцию: к выходным добавятся праздники и
-дни без свободных слотов.
+`lib/date.ts` (`isBookable`), а не проверка внутри компонента; гостевое окно
+(Q5) собирается поверх — `lib/window.ts` (`isBookableDay`, `isBookableSlot`)
+составляет `isBookable` и не переизобретает ни выходные, ни прошедшие дни.
+«Как написать дату по-русски» — `lib/date.ts` (`formatDateRu`). Если второму
+компоненту понадобится то же самое, он импортирует из `lib/`, а не переписывает
+правило у себя. Расширение правила идёт в ту же функцию: к выходным добавятся
+праздники и дни без свободных слотов.
+
+**Часы — шов (T3).** Доменные правила времени не читают системные часы:
+`isPast`/`isBookable` принимают `moment: string`, окно — `lib/window.ts` —
+тоже, а единственным источником «сейчас» остаются `today()` и `now()` в
+`lib/date.ts`, значения которых подставляют вызывающие. Границы окна и слотов
+тогда тестируются фиксированной строкой `'YYYY-MM-DD HH:mm'` и не дрейфуют при
+смене суток.
 
 ## 4. Контракты
 
@@ -98,8 +114,8 @@ Mantine, ни от его внутреннего устройства.
 единственный источник истины. Из него генерируются `contract/openapi.yaml`, две
 TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`) и JSON Schema
 (`contract/schema/calendar-of-meetings.json`, K4/ADR-0005); `src/lib/meetings/types.ts`,
-`src/lib/meeting-types/types.ts`, `server/types.ts`, `Session` и `LoginInput` —
-alias'ы на генерат, ручных дублей больше нет.
+`src/lib/meeting-types/types.ts`, `src/lib/session/types.ts`, `server/types.ts`,
+`Session` и `LoginInput` — alias'ы на генерат, ручных дублей больше нет.
 Копии TS две, а не одна общая, потому что `rootDir: server` закрывает серверу импорт из
 `src/` (§3): копия лежит внутри `server/`, инвариант сохранён.
 
@@ -156,6 +172,15 @@ MeetingTypesApi {                                // src/lib/meeting-types/ (F3),
   deactivate(id: string): Promise<MeetingType>            // неизвестный id — исключение
                                                  // (сервер отвечает 400, не 404)
 }
+
+Session     { role: 'admin' | 'guest'; bookerName: string | null }  // у админа bookerName null
+LoginInput  { password: string; bookerName?: string } // роль определяет сервер по паролю (Q9)
+
+SessionApi {                                     // src/lib/session/ (F2), зеркало MeetingsApi
+  login(input: LoginInput): Promise<Session>     // неизвестный пароль — исключение (401)
+  logout(): Promise<void>                        // без активной сессии — исключение (401)
+  me(): Promise<Session | null>                  // 401 — штатное «сессии нет», не ошибка (C9)
+}
 ```
 
 Строки вместо `Date` — по трём причинам:
@@ -170,10 +195,15 @@ MeetingTypesApi {                                // src/lib/meeting-types/ (F3),
 Этот же контракт повторяет HTTP: `id` отдаётся строкой, границы диапазона
 включены, сортировка — по `(date, time)`.
 
-Правило доступности дня тоже живёт в `lib` и обращается к трём независимым
-функциям: `isPast` сравнивает по дням (`isBefore(dayjs(), 'day')`), а не по
+Правило доступности дня тоже живёт в `lib` и собирается из трёх независимых
+функций: `isPast` сравнивает по дням (`isBefore(…, 'day')`), а не по
 точному времени, иначе сегодняшний день считался бы прошедшим в течение суток;
-`isWeekend` — суббота и воскресенье; `isBookable` — их отрицание.
+`isWeekend` — суббота и воскресенье; `isBookable` — их отрицание. Все они
+принимают «сейчас» параметром (`moment`), а часы читают только `today()` и
+`now()` из того же файла — так правило тестируется фиксированной строкой (T3).
+Гостевое окно (Q5) собирается поверх в `lib/window.ts`: `isBookableDay` —
+будни в пределах сегодня…сегодня+13, `isBookableSlot` — плюс «сегодняшнее
+время строго позже текущего». Окно — политика UI, сервер по C1 его не проверяет.
 
 ## 5. Решения, за которые пришлось заплатить
 
@@ -183,11 +213,13 @@ MeetingTypesApi {                                // src/lib/meeting-types/ (F3),
 `div` и **молча ничего не делают**, потому что `<div>` не стреляет `change`.
 Выделение есть только у `DatePicker`, `DateInput`, `DatePickerInput`.
 `DatePicker` рендерит `Calendar` внутри себя, то есть является заменой drop-in.
-Правило недоступных дней переворачивается в конвенцию Mantine на месте:
+Правило недоступных дней переворачивается в конвенцию Mantine на месте
+(правило — `isBookableDay` из `lib/window.ts`: будни, не прошедший день и
+гостевое окно Q5):
 
 ```tsx
-const notBookable = (date: string): boolean => !isBookable(date);
-<DatePicker excludeDate={notBookable} />
+const moment = now(); // фиксируется на рендер: excludeDate зовётся на каждую ячейку
+<DatePicker excludeDate={(date) => !isBookableDay(date, moment)} />
 ```
 
 **Выбор слота живёт в `App`, а не в модалке** (`src/components/MeetingModal.tsx:32`).
@@ -243,9 +275,9 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 | Новое правило формата (поле, паттерн) | `contract/main.tsp` — правило обязано жить в контракте, а не только в серверном коде: валидация идёт по сгенерированной схеме через `ajv` (§4). Рукописной остаётся только то, что JSON Schema не выражает. |
 | Правило, зависящее от роли | `server/routes.ts` рядом с `ajv`-предикатом: схема формы роль не выразит (как `bookerName` для гостя). Не подмешивать домен — см. следующую строку. |
 | Доменная валидация на сервере (2-й клиент, публичный API) | Сейчас сервер проверяет только формат (§4). Правила (`isBookable`, сетка слотов) вынести в общий модуль и звать из `server/validate.ts`; UI продолжит пользоваться `lib/`. |
-| Праздники, дни без свободных слотов | `lib/date.ts:34` `isBookable`. |
+| Праздники, дни без свободных слотов | `lib/date.ts` `isBookable` (день) и `lib/window.ts` `isBookableSlot` (время слота). |
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
-| Горизонт списка записей | `src/hooks/useMeetings.ts:11` `HORIZON_DAYS`. |
+| Горизонт списка записей | `lib/window.ts` `WINDOW_DAYS` (гостевое окно Q5): верхняя граница списка — `windowEnd(now())` в `useMeetings`. Админский список окном не ограничен (Q6) — придёт с S4/F5. |
 | Ручное обновление списка | `refresh` уже возвращается хуком (`useMeetings.ts:55`), но UI его пока не вызывает — кнопка добавится без изменения хука. |
 | Список всех записей (не только модалка) | `App.tsx` получает весь массив `meetings`; сортировка и фильтрация — его дело, а не компонентов. |
 
@@ -263,9 +295,12 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
    `value === date || bookedDates.includes(date)`. Свой `disabled` в
    `getDayProps` передавать нельзя: он вычисляется раньше `excludeDate` и тихо
    его ломает.
-2. **Горизонт 90 дней фиксирован и не связан с показанным месяцем.** Запись на
-   4-й месяц вперёд не помечается занятым днём. Нужен `onMonthChange` в
-   `MeetingCalendar` и диапазон из отображаемого месяца — правка хука и API.
+2. **Окно считается от текущего момента, а не от отображаемого месяца.**
+   Гостевое окно Q5 (сегодня…+13) и граница списка (`windowEnd(now())` в
+   `useMeetings`) пересчитываются при загрузке. `MeetingCalendar` может
+   показать любой месяц, но за пределами окна дни выключены — туда не загружаются
+   и занятые слоты. Админский список окном не ограничен (Q6) — его диапазон
+   придёт вместе с S4/F5.
 3. **Сервер валидирует формат, не домен.** Прошедшие даты, выходные и
    время вне сетки слотов принимаются. Формат при этом проверяет `ajv` по
    схеме из `contract/schema/` (§4), так что дыра только доменная. UI такие
@@ -277,8 +312,9 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-124 тестов: `date.ts` 10, `slots.ts` 4, `meetings` (`inMemory` 7, `http` 6),
-`meeting-types` (`inMemory` 7, `http` 8), `useMeetings` 6, `useMeetingTypes` 6,
+165 тестов: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 7, `http` 6),
+`meeting-types` (`inMemory` 7, `http` 8), `session` (`inMemory` 8, `http` 10),
+`useMeetings` 6, `useMeetingTypes` 6, `useSession` 7,
 `MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 10,
 `meeting-types-repository` 6, `routes` 30, `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
 роутов со спекой и порядка сеанс-гейта). Фронтовые тесты

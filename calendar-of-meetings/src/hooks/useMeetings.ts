@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import dayjs from 'dayjs';
 import { meetingsApi, type MeetingsApi } from '../lib/meetings/api.ts';
 import type { Meeting, MeetingDraft } from '../lib/meetings/types.ts';
-import { today } from '../lib/date.ts';
-
-/**
- * Насколько далеко вперёд смотрим. Прошедшие встречи показывать не нужно, а
- * по календарю не прыгают на год вперёд — 90 дней хватает.
- */
-const HORIZON_DAYS = 90;
+import { now, today } from '../lib/date.ts';
+import { windowEnd } from '../lib/window.ts';
 
 const LOAD_ERROR = 'Не удалось получить список записей.';
 const CREATE_ERROR = 'Не удалось создать запись. Выберите другое время.';
@@ -43,11 +37,15 @@ export function useMeetings(api: MeetingsApi = meetingsApi): UseMeetingsResult {
   });
 
   // Запрос сам по себе состояние не трогает — только возвращает данные.
+  // Диапазон — гостевое окно (Q5: сегодня … сегодня+13), а не прежние 90
+  // дней: дальше записаться всё равно нельзя (isBookableDay в календаре), так
+  // что лишние данные не грузим. Админский список окном не ограничен (Q6) —
+  // придёт отдельной поверхностью (S4/F5), этот хук ему не подставляется.
   const request = useCallback(
     (): Promise<Meeting[]> =>
       api.list({
         from: today(),
-        to: dayjs().add(HORIZON_DAYS, 'day').format('YYYY-MM-DD'),
+        to: windowEnd(now()),
       }),
     [api],
   );
