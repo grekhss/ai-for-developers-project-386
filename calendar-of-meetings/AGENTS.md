@@ -2,6 +2,16 @@
 
 Guidance for AI agents working in this app. The git repo root is one level up.
 
+## Правила сессии
+
+- **Общение с пользователем — только на русском:** статусы, вопросы и отчёты о
+  проделанной работе. Сообщения для коммитов — по-английски, как вся
+  существующая история репозитория.
+- **Все операции в git (add, commit, push, reset, …) выполняет только
+  пользователь.** Работа агента заканчивается отчётом: список изменённых
+  файлов и предложенное сообщение для коммита, объясняющее, что изменилось и
+  почему. (`git status` / `git log` для самопроверки — можно.)
+
 ## Commands
 
 This folder is the only package in the repo — there is no root `package.json` and
@@ -157,12 +167,22 @@ npm 10 locally.
   The header shows the *current* month, so a test asserting "октября" passes in
   October and fails in November. `/^\d{1,2} [а-яё]+ \d{4}$/` proves Russian
   locale in any month.
-- **`App` takes an optional `api` prop, and it is load-bearing in tests.**
-  `lib/meetings/api.ts` exports a module-level singleton, so without a per-test
-  `createInMemoryMeetingsApi()` the meetings leak between test cases in the same
-  file and a slot booked by an earlier test is `disabled` in a later one — the
-  click silently does nothing and the test times out on a `findBy`. Pass
-  `api={createInMemoryMeetingsApi()}` from every render test.
+- **`App` takes optional `api` and `sessionApi` props, and both are load-bearing
+  in tests.** `lib/meetings/api.ts` exports a module-level singleton, so without
+  a per-test `createInMemoryMeetingsApi()` the meetings leak between test cases
+  in the same file and a slot booked by an earlier test is `disabled` in a later
+  one — the click silently does nothing and the test times out on a `findBy`.
+  `lib/session/api.ts` is a singleton the same way, and the whole app is gated
+  by login (Q12a), so every render test also passes `sessionApi` — seeded
+  guest (`createInMemorySessionApi({ role: 'guest', bookerName: 'Тест' })`) for
+  calendar scenarios, `createInMemorySessionApi(null)` to reach the login
+  screen. The `renderApp` helper in `App.test.tsx` awaits the end of session
+  restore ("Восстановление сессии…") before returning; without it the first
+  query races the `me()` promise.
+- **Mantine adds an asterisk inside the label of a `required` field** (an
+  `aria-hidden` `<span>` with ` * `), so the normalized label text is «Пароль *»
+  and `getByLabelText('Пароль')` finds nothing. Query with a regex
+  (`getByLabelText(/^Пароль/)`) rather than dropping `required`.
 
 ## Mantine v9 dates — check this before writing date code
 
@@ -383,12 +403,14 @@ calendar-of-meetings/
 │   └── routes.test.ts      # интеграция: createApp({ meetings, meetingTypes }, …) + listen(0) + fetch
 └── src/
     ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
-    ├── App.tsx             # page-level state and layout; renders components/
+    ├── App.tsx             # гейт по сессии + шапка; рендерит LoginScreen или GuestView
     ├── App.test.tsx        # colocated vitest tests
+    ├── GuestView.tsx       # гостевой вид: календарь + модалка; state букинга и useMeetings
     ├── components/         # rendering only; props in, no domain rules
     │   ├── MeetingModal.tsx   # slot picker in a Modal; controlled time prop
     │   ├── MeetingModal.test.tsx
-    │   └── MeetingCalendar.tsx  # the only component that renders date selection
+    │   ├── MeetingCalendar.tsx  # the only component that renders date selection
+    │   └── LoginScreen.tsx   # форма входа (D4); поля формы держит App, компонент рендерит
     ├── hooks/              # React state around lib; the only place with useState
     │   ├── useMeetings.ts  # load/create meetings; takes a MeetingsApi so tests inject a fake
     │   ├── useMeetings.test.ts
@@ -430,10 +452,10 @@ calendar-of-meetings/
 ```
 
 **Read `ARCHITECTURE.md` first.** It covers the layers, the `MeetingsApi`
-contract, the decisions that cost something (controlled slot in `App`, inlined
-mount load, `api` prop in `App`) and the known gaps. This file covers commands,
-conventions, and Mantine traps — the two documents deliberately don't repeat each
-other.
+contract, the decisions that cost something (controlled slot in `GuestView`,
+inlined mount load, `api`/`sessionApi` props in `App`) and the known gaps. This
+file covers commands, conventions, and Mantine traps — the two documents
+deliberately don't repeat each other.
 
 **Three layers:** `lib/` holds pure functions and types with no React and no
 Mantine imports; `components/` renders; `hooks/` is the only place that owns
@@ -445,14 +467,16 @@ Russian?", it imports from `lib/`, it does not re-derive it. Keep
 `@mantine/dates` confined to `components/` that actually render dates, so the
 rest of the app passes plain `'YYYY-MM-DD'` strings around.
 
-**`App` owns only UI state; `lib` state is never mirrored.** It holds
-`selectedDate`, `time`, and `lastBooked` (a `MeetingDraft` kept only to render
-the «Запись: …» line — `Meeting` carries no creation timestamp, so "the newest
-one" isn't derivable from the sorted array). Resetting on date change happens in
+**Page-level components own only UI state; `lib` state is never mirrored.**
+`GuestView` holds `selectedDate`, `time`, and `lastBooked` (a `MeetingDraft`
+kept only to render the «Запись: …» line — `Meeting` carries no creation
+timestamp, so "the newest one" isn't derivable from the sorted array); `App`
+держит только поля формы входа (пароль, имя гостя, «Я гость») — сама сессия
+принадлежит `useSession`, а не странице. Resetting on date change happens in
 the click handler, not in an effect:
 
 ```tsx
-onSelect={(date) => { setTime(null); setSelectedDate(date); }}
+onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date); }}
 ```
 
 `MeetingModal` is deliberately always mounted (so Mantine keeps its close
