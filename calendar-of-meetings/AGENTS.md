@@ -205,9 +205,10 @@ Overflow answers, and your own priors. Verified against
   руками их не правят, правка идёт в `.tsp` и приезжает через `npm run contract`.
 - **Контракт описывает формат и схему, не домен.** Прошедшие даты, выходные и сетка
   слотов остаются фронтовой политикой; `server/validate.ts` валидирует формат по сгенерированным
-  схемам через `ajv` (булев предикат, K4) — руками в нём остаётся только то, что JSON Schema
-  не выразит: обёртка `req.body === undefined` (в Express 5 парсер может не сработать) и
-  роль-зависимое «для гостя обязателен `bookerName`» в `routes.ts`. Русские тексты ошибок — в роутах.
+  схемам через `ajv` (булев предикат, K4) — руками остаётся то, что JSON Schema не выразит,
+  и живёт это в `routes.ts`: обёртка `req.body === undefined` (в Express 5 парсер может не
+  сработать), целостность `meeting_type_id` (существующий активный тип) и `booker` из
+  подписанной сессии, а не из тела (S5, Q4/C10). Русские тексты ошибок — тоже в роутах.
 - **Схемы в `contract/schema/` — артефакт той же компиляции, что и спека.** Эмиттер
   `@typespec/json-schema@~1.11.0` в `tspconfig.yaml` даёт один бандл (`bundleId`) в формате
   JSON Schema **draft 2020-12**, поэтому сервер собирает `ajv` из `ajv/dist/2020`. Две ловушки:
@@ -369,8 +370,8 @@ calendar-of-meetings/
 ├── server/                 # express + better-sqlite3; импорты — с .js-суффиксом
 │   ├── index.ts            # wiring: БД → createApp → listen; логики нет
 │   ├── app.ts              # createApp: express.json, роуты, статика dist/
-│   ├── routes.ts           # GET/POST /api/meetings + ручки типов встреч (S3)
-│   ├── repository.ts       # createRepository: list/create; UNIQUE → DuplicateMeetingError
+│   ├── routes.ts           # GET/POST /api/meetings (S5: тип + booker из сессии) + ручки типов встреч (S3)
+│   ├── repository.ts       # createRepository: list/create(draft, booker); UNIQUE → DuplicateMeetingError
 │   ├── meeting-types-repository.ts  # createMeetingTypesRepository: create/deactivate/listActive/listAll
 │   ├── db.ts               # createDatabase + defaultDbPath (data/meetings.sqlite)
 │   ├── validate.ts         # форматная валидация по схемам контракта через ajv (не домен!)

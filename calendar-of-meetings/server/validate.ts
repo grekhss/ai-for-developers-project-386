@@ -19,8 +19,10 @@ import type { CreateMeetingBody, CreateMeetingTypeBody, ListMeetingsQuery, Login
  *
  * Граница прежняя: сервер валидирует формат, не домен — прошедшие даты, выходные
  * и сетка слотов остаются фронтовой политикой (ARCHITECTURE §3/§9), а импорт из
- * src/ закрыт rootDir: server. Условие «для гостя обязателен bookerName» — про
- * роль, не про формат, JSON Schema его не выразит: оно рукописное в routes.ts.
+ * src/ закрыт rootDir: server. Рукописное в routes.ts — то, что JSON Schema не
+ * выразит: обёртка `req.body === undefined`, условие «для гостя обязателен
+ * bookerName», и integrity-проверки S5 (существующий активный тип, booker из
+ * сессии): их входные данные — роль и база, а не тело.
  *
  * ajv работает предикатом: coerceTypes/useDefaults/removeAdditional выключены,
  * так что валидатор данные не трогает и ничего не додумывает.
@@ -73,7 +75,10 @@ const validMeetingTypeDraft = ajv.compile<CreateMeetingTypeBody>(schemaOf('Meeti
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
-/** Тело POST /api/meetings: дата 'YYYY-MM-DD', время 'HH:mm', бронирующий непуст. */
+/**
+ * Тело POST /api/meetings: дата 'YYYY-MM-DD', время 'HH:mm'; meeting_type_id —
+ * строка, если передан (его существование и активность — уже integrity в routes.ts).
+ */
 export function isValidDraft(body: unknown): body is CreateMeetingBody {
   return isObject(body) && validDraft(body);
 }

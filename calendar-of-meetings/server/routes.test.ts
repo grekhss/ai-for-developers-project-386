@@ -2,6 +2,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type Database from 'better-sqlite3';
 import { createApp } from './app.js';
 import { createDatabase } from './db.js';
 import { createMeetingTypesRepository } from './meeting-types-repository.js';
@@ -21,6 +22,7 @@ const AUTH = {
 function repos() {
   const db = createDatabase(':memory:');
   return {
+    db,
     meetings: createRepository(db),
     meetingTypes: createMeetingTypesRepository(db),
   };
@@ -29,8 +31,14 @@ function repos() {
 // Интеграция собирается как в проде: createApp(createRepository(':memory:')).
 // Через index.ts не ходим — он биндит порт и открывает файловую БД.
 // Все /api за requireSession, поэтому сразу логинимся админом и отдаём cookie.
-async function createTestApp(): Promise<{ baseUrl: string; adminCookie: string }> {
-  const app = createApp(repos(), { ...AUTH });
+async function createTestApp(): Promise<{
+  baseUrl: string;
+  adminCookie: string;
+  /** Той же БД владеет приложение: S5 читает колонки meetings напрямую. */
+  db: Database.Database;
+}> {
+  const repositorySet = repos();
+  const app = createApp(repositorySet, { ...AUTH });
   const server = app.listen(0);
   servers.push(server);
   await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -46,7 +54,7 @@ async function createTestApp(): Promise<{ baseUrl: string; adminCookie: string }
   const [setCookie] = login.headers.getSetCookie();
   const adminCookie = setCookie.split(';')[0];
 
-  return { baseUrl, adminCookie };
+  return { baseUrl, adminCookie, db: repositorySet.db };
 }
 
 const servers: Server[] = [];
@@ -64,13 +72,13 @@ afterAll(async () => {
 
 function postMeeting(
   baseUrl: string,
-  adminCookie: string,
+  cookie: string,
   body: unknown,
   headers?: Record<string, string>,
 ) {
   return fetch(`${baseUrl}/api/meetings`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: adminCookie, ...headers },
+    headers: { 'Content-Type': 'application/json', Cookie: cookie, ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -78,6 +86,38 @@ function postMeeting(
 /** GET-запрос meetings уже с админ-сессией. */
 function getMeetings(baseUrl: string, adminCookie: string, query = '?from=2026-01-01&to=2026-12-31') {
   return fetch(`${baseUrl}/api/meetings${query}`, { headers: { Cookie: adminCookie } });
+}
+
+/**
+ * Гостевая cookie. Записи создаёт только гость — в его сессии есть имя,
+ * у админа bookerName null и POST /api/meetings отвечает 400 (Q12c, S5).
+ */
+async function loginAsGuest(baseUrl: string, bookerName = 'Иван'): Promise<string> {
+  const response = await fetch(`${baseUrl}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: AUTH.guestPassword, bookerName }),
+  });
+  if (response.status !== 200) throw new Error('setup: гостевой логин не прошёл');
+  const [setCookie] = response.headers.getSetCookie();
+  return setCookie.split(';')[0];
+}
+
+/** POST /api/meeting-types: cookie опциональна — так проверяется 401 без сессии. */
+function postType(
+  baseUrl: string,
+  cookie: string | undefined,
+  body: unknown,
+  path = '/api/meeting-types',
+) {
+  return fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookie === undefined ? {} : { Cookie: cookie }),
+    },
+    body: JSON.stringify(body),
+  });
 }
 
 describe('createApp: валидация auth-конфига', () => {
@@ -245,32 +285,9 @@ describe('requireRole: ролевой гейт (изолированный probe
 });
 
 describe('routes /api/meeting-types (за requireSession, S3)', () => {
-  /** Гостевая cookie: login отдаёт её тем же порядком, что и админская. */
-  async function guestCookie(baseUrl: string): Promise<string> {
-    const response = await fetch(`${baseUrl}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: AUTH.guestPassword, bookerName: 'Иван' }),
-    });
-    if (response.status !== 200) throw new Error('setup: гостевой логин не прошёл');
-    const [setCookie] = response.headers.getSetCookie();
-    return setCookie.split(';')[0];
-  }
-
   function getTypes(baseUrl: string, cookie?: string) {
     return fetch(`${baseUrl}/api/meeting-types`, {
       headers: cookie === undefined ? undefined : { Cookie: cookie },
-    });
-  }
-
-  function postType(baseUrl: string, cookie: string | undefined, body: unknown, path = '/api/meeting-types') {
-    return fetch(`${baseUrl}${path}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(cookie === undefined ? {} : { Cookie: cookie }),
-      },
-      body: JSON.stringify(body),
     });
   }
 
@@ -303,7 +320,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
     ]);
 
     // Гость: деактивированный тип не попадает в список (Q7).
-    const guest = await getTypes(baseUrl, await guestCookie(baseUrl));
+    const guest = await getTypes(baseUrl, await loginAsGuest(baseUrl));
     expect(await guest.json()).toEqual([
       { id: '2', name: 'Собеседование', description: '', active: true },
     ]);
@@ -328,7 +345,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
 
   it('POST гостем отвечает 403', async () => {
     const { baseUrl } = await createTestApp();
-    const response = await postType(baseUrl, await guestCookie(baseUrl), {
+    const response = await postType(baseUrl, await loginAsGuest(baseUrl), {
       name: 'Консультация',
       description: '',
     });
@@ -386,7 +403,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
 
     const response = await postType(
       baseUrl,
-      await guestCookie(baseUrl),
+      await loginAsGuest(baseUrl),
       {},
       '/api/meeting-types/1/deactivate',
     );
@@ -434,30 +451,37 @@ describe('routes /api/meetings (за requireSession)', () => {
   });
 
   it('POST принимает JSON и отвечает 201 с id строкой', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const response = await postMeeting(baseUrl, adminCookie, { date: '2026-03-02', time: '09:00' });
+    const { baseUrl } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
+    // Без meeting_type_id запись остаётся «нетипизированной» — как легаси-строки
+    // (C5): поле в контракте опционально, обязательным его делает гостевой флоу.
+    const response = await postMeeting(baseUrl, guest, { date: '2026-03-02', time: '09:00' });
     expect(response.status).toBe(201);
     const meeting = (await response.json()) as Record<string, unknown>;
+    // Ровно поля контрактной Meeting: booker и meeting_type_id не эхом возвращаются.
     expect(meeting).toEqual({ id: '1', date: '2026-03-02', time: '09:00' });
     expect(typeof meeting.id).toBe('string');
   });
 
   it('POST дубля слота отвечает 409', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
     const body = { date: '2026-03-02', time: '09:00' };
 
-    expect((await postMeeting(baseUrl, adminCookie, body)).status).toBe(201);
-    // Второй POST того же слота отклоняется сервером, а не UI.
-    expect((await postMeeting(baseUrl, adminCookie, body)).status).toBe(409);
+    expect((await postMeeting(baseUrl, guest, body)).status).toBe(201);
+    // Второй POST того же слота отклоняется сервером, а не UI; UNIQUE(date, time)
+    // в базе остаётся последним рубежом, когда предварительные проверки пройдены.
+    expect((await postMeeting(baseUrl, guest, body)).status).toBe(409);
   });
 
   it('POST без Content-Type: application/json отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
     // express.json() не парсит text/plain: req.body в Express 5 остаётся
     // undefined. Без заголовка каждый POST вернул бы 400.
     const response = await postMeeting(
       baseUrl,
-      adminCookie,
+      guest,
       { date: '2026-03-02', time: '09:00' },
       { 'Content-Type': 'text/plain' },
     );
@@ -465,7 +489,8 @@ describe('routes /api/meetings (за requireSession)', () => {
   });
 
   it('POST невалидного тела отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
     const invalidBodies = [
       {},
       { date: '2026-03-02' },
@@ -474,14 +499,133 @@ describe('routes /api/meetings (за requireSession)', () => {
       { date: '2026-03-02', time: '24:00' },
       { date: null, time: '09:00' },
       { date: 20260302, time: '09:00' },
+      // meeting_type_id, если передан, — строка-идентификатор; null и число
+      // отклоняет схема (отсутствие поля, наоборот, допустимо — см. выше).
+      { date: '2026-03-02', time: '09:00', meeting_type_id: null },
+      { date: '2026-03-02', time: '09:00', meeting_type_id: 42 },
       'not an object',
     ];
 
     for (const body of invalidBodies) {
       // `message` в expect — это контекст провала: без него Vitest не скажет,
       // какое из тел не получил 400, и в цикле из семи это квест на угадывание.
-      expect((await postMeeting(baseUrl, adminCookie, body)).status, `тело ${JSON.stringify(body)}`).toBe(400);
+      expect((await postMeeting(baseUrl, guest, body)).status, `тело ${JSON.stringify(body)}`).toBe(400);
     }
+  });
+
+  it('POST берёт booker из сессии: поле booker в теле игнорируется (Q4/C10)', async () => {
+    const { baseUrl, db } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
+
+    const response = await postMeeting(baseUrl, guest, {
+      date: '2026-03-02',
+      time: '10:00',
+      booker: 'Злоумышленник',
+    });
+    expect(response.status).toBe(201);
+    // Ответ — только поля контрактной Meeting: тело booker не возвращается эхом.
+    expect(await response.json()).toEqual({ id: '1', date: '2026-03-02', time: '10:00' });
+
+    // Наблюдаемое — колонка: имя взято из подписанной cookie, а не из тела.
+    const row = db.prepare('SELECT booker FROM meetings').get() as { booker: string };
+    expect(row.booker).toBe('Иван');
+  });
+
+  it('POST админом без имени в сессии отвечает 400', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    // У админа bookerName null, а booker обязателен для записи (Q12c: админ
+    // наблюдает, но не записывается) — в контракте нет 403, поэтому это 400.
+    const response = await postMeeting(baseUrl, adminCookie, {
+      date: '2026-03-02',
+      time: '09:00',
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'имя записавшегося обязательно' });
+  });
+
+  it('POST с именем из сессии длиннее 100 символов отвечает 400, ровно 100 — проходит', async () => {
+    const { baseUrl } = await createTestApp();
+    // Граница MAX_BOOKER_LENGTH в routes.ts: 100 включительно, 101 уже нет —
+    // пара на границе ловит и сдвиг границы (100→101), и замену > на >=.
+    const tooLong = await loginAsGuest(baseUrl, 'И'.repeat(101));
+    const rejected = await postMeeting(baseUrl, tooLong, {
+      date: '2026-03-02',
+      time: '09:00',
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({
+      error: 'имя записавшегося длиннее 100 символов',
+    });
+
+    const exactly100 = await loginAsGuest(baseUrl, 'И'.repeat(100));
+    expect(
+      (await postMeeting(baseUrl, exactly100, { date: '2026-03-03', time: '09:00' })).status,
+    ).toBe(201);
+  });
+
+  it('POST с неизвестным или деактивированным meeting_type_id отвечает 400 (C1)', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '' });
+    await postType(baseUrl, adminCookie, {}, '/api/meeting-types/2/deactivate');
+
+    for (const meetingTypeId of ['999', '2']) {
+      const response = await postMeeting(baseUrl, guest, {
+        date: '2026-03-02',
+        time: '09:00',
+        meeting_type_id: meetingTypeId,
+      });
+      expect(response.status, `meeting_type_id ${meetingTypeId}`).toBe(400);
+      expect(await response.json(), `meeting_type_id ${meetingTypeId}`).toEqual({
+        error: 'тип встречи не найден или неактивен',
+      });
+    }
+  });
+
+  it('POST с активным meeting_type_id создаёт запись и сохраняет тип', async () => {
+    const { baseUrl, adminCookie, db } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+
+    const response = await postMeeting(baseUrl, guest, {
+      date: '2026-03-02',
+      time: '09:00',
+      meeting_type_id: '1',
+    });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ id: '1', date: '2026-03-02', time: '09:00' });
+
+    // Колонка INTEGER: строковый id контракта хранится числом.
+    const row = db.prepare('SELECT meeting_type_id FROM meetings').get() as {
+      meeting_type_id: number;
+    };
+    expect(row.meeting_type_id).toBe(1);
+  });
+
+  it('POST принимает выходные и даты вне гостевого окна — 201 (документация C1/T11)', async () => {
+    // Намеренное поведение: окно/выходные/прошлое — политика UI, а не сервера
+    // (C1). Тест фиксирует, что сервер НЕ начинает вдруг их проверять. Удалить
+    // вместе с тестом, если C1 пересмотрят в сторону общего shared/-модуля.
+    const { baseUrl, adminCookie } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl);
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+
+    // Суббота — выходной (и прошедшая дата: тоже UI-политика)…
+    const weekend = await postMeeting(baseUrl, guest, {
+      date: '2026-03-07',
+      time: '10:00',
+      meeting_type_id: '1',
+    });
+    expect(weekend.status).toBe(201);
+
+    // …а дата далеко за пределами окна сегодня…сегодня+13.
+    const outOfWindow = await postMeeting(baseUrl, guest, {
+      date: '2030-01-07',
+      time: '10:00',
+      meeting_type_id: '1',
+    });
+    expect(outOfWindow.status).toBe(201);
   });
 
   it('GET без from/to отвечает 400', async () => {
@@ -506,9 +650,10 @@ describe('routes /api/meetings (за requireSession)', () => {
 
   it('GET фильтрует по диапазону и сортирует по (date, time)', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
-    await postMeeting(baseUrl, adminCookie, { date: '2026-01-02', time: '10:00' });
-    await postMeeting(baseUrl, adminCookie, { date: '2026-01-01', time: '11:00' });
-    await postMeeting(baseUrl, adminCookie, { date: '2027-01-01', time: '09:00' });
+    const guest = await loginAsGuest(baseUrl);
+    await postMeeting(baseUrl, guest, { date: '2026-01-02', time: '10:00' });
+    await postMeeting(baseUrl, guest, { date: '2026-01-01', time: '11:00' });
+    await postMeeting(baseUrl, guest, { date: '2027-01-01', time: '09:00' });
 
     const response = await getMeetings(baseUrl, adminCookie);
     expect(await response.json()).toEqual([

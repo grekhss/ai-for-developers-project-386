@@ -130,7 +130,10 @@ export const listMeetings = <ThrowOnError extends boolean = false>(options: Opti
 /**
  * Создание записи. Формат — 400; занятый слот — 409 (UNIQUE(date, time) в базе).
  * Выбор несуществующего/деактивированного типа — тоже 400 (S5, C1).
- * Возвращает запись с присвоенным id.
+ * `booker` берётся из подписанной сессионной cookie, никогда из тела (Q4):
+ * поле `booker` в теле игнорируется (C10), а его отсутствие в сессии (админ)
+ * или длина больше 100 символов — 400. Окно/выходные/прошлое сервер не
+ * проверяет (C1) — это политика UI. Возвращает запись с присвоенным id.
  */
 export const createMeeting = <ThrowOnError extends boolean = false>(options: Options<CreateMeetingData, ThrowOnError>) => (options.client ?? client).post<CreateMeetingResponses, CreateMeetingErrors, ThrowOnError>({
     security: [{

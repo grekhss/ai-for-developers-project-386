@@ -21,6 +21,14 @@ type AuthOptions = Pick<AppOptions, 'adminPassword' | 'guestPassword' | 'secureC
  */
 type NoParams = Record<string, string>;
 
+/**
+ * Верхняя граница имени записавшегося (C10): без неё в базу лег бы сколь угодно
+ * длинный `booker` из сессии. Проверка живёт здесь, а не в JSON Schema — значение
+ * приходит из подписанной cookie, а не из тела (Q4), и схема его не видит.
+ * Граница включительна: 100 символов проходит, 101 — нет (см. парный тест).
+ */
+const MAX_BOOKER_LENGTH = 100;
+
 /** Роуты API. Фабрика: принимает репозитории, чтобы тесты подавали ':memory:'. */
 export function createRoutes(repos: AppRepositories, auth: AuthOptions): express.Router {
   const router = express.Router();
@@ -87,12 +95,39 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
 
   router.post<NoParams, unknown, CreateMeetingBody>('/api/meetings', (req, res) => {
     if (!isValidDraft(req.body)) {
-      res.status(400).json({ error: 'date и time обязательны, формат time HH:mm' });
+      res.status(400).json({
+        error: 'date и time обязательны, формат time HH:mm; meeting_type_id — строка, если передан',
+      });
+      return;
+    }
+
+    // Целостность, а не домен (C1): названный тип обязан существовать и быть
+    // активным — иначе запись ссылается на чужую или законченную сущность (Q7).
+    // Окно/выходные/прошлое здесь не проверяются — это политика UI (тест T11).
+    const meetingTypeId = req.body.meeting_type_id;
+    if (
+      meetingTypeId !== undefined &&
+      !repos.meetingTypes.listActive().some((type) => type.id === meetingTypeId)
+    ) {
+      res.status(400).json({ error: 'тип встречи не найден или неактивен' });
+      return;
+    }
+
+    // booker — только из подписанной сессии, никогда из тела (Q4/C10): поле
+    // booker в req.body игнорируется. У админа bookerName null — он не
+    // записывается (Q12c), а в контракте для этой ручки нет 403, поэтому 400.
+    const booker = req.session?.bookerName;
+    if (!booker) {
+      res.status(400).json({ error: 'имя записавшегося обязательно' });
+      return;
+    }
+    if (booker.length > MAX_BOOKER_LENGTH) {
+      res.status(400).json({ error: `имя записавшегося длиннее ${MAX_BOOKER_LENGTH} символов` });
       return;
     }
 
     try {
-      res.status(201).json(repos.meetings.create(req.body));
+      res.status(201).json(repos.meetings.create(req.body, booker));
     } catch (error) {
       if (error instanceof DuplicateMeetingError) {
         res.status(409).json({ error: 'слот уже занят' });
