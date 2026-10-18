@@ -110,10 +110,10 @@ describe('createRepository', () => {
 
   it('list фильтрует по диапазону и сортирует по (date, time)', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    const late2027 = repo.create({ date: '2027-01-01', time: '09:00' });
-    repo.create({ date: '2026-01-02', time: '10:00' });
-    repo.create({ date: '2026-01-01', time: '11:00' });
-    repo.create({ date: '2026-01-02', time: '09:00' });
+    const late2027 = repo.create({ date: '2027-01-01', time: '09:00' }, 'Иван');
+    repo.create({ date: '2026-01-02', time: '10:00' }, 'Иван');
+    repo.create({ date: '2026-01-01', time: '11:00' }, 'Иван');
+    repo.create({ date: '2026-01-02', time: '09:00' }, 'Иван');
 
     // Сортировка лексикографическая по дате, затем по времени; границы включены.
     expect(repo.list('2026-01-01', '2026-12-31')).toEqual([
@@ -127,24 +127,51 @@ describe('createRepository', () => {
 
   it('create возвращает запись с присвоенным id строкой', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    const meeting = repo.create({ date: '2026-01-05', time: '14:00' });
+    const meeting = repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван');
     expect(meeting).toEqual({ id: '1', date: '2026-01-05', time: '14:00' });
     // id в ответе — строка, как в контракте src/lib/meetings/types.ts.
     expect(typeof meeting.id).toBe('string');
   });
 
+  it('create сохраняет booker и meeting_type_id; без типа в колонке NULL (S5)', () => {
+    const db = createDatabase(':memory:');
+    // FK включён у better-sqlite3 по умолчанию — ссылка на meeting_types
+    // проверяется и на уровне БД (последний рубеж под проверки роута).
+    db.prepare('INSERT INTO meeting_types (name, description) VALUES (?, ?)').run(
+      'Консультация',
+      '',
+    );
+    const repo = createRepository(db);
+
+    repo.create({ date: '2026-01-05', time: '14:00', meeting_type_id: '1' }, 'Иван');
+    repo.create({ date: '2026-01-06', time: '11:00' }, 'Мария');
+
+    // Колонка meeting_type_id INTEGER: строковый id контракта ляжет числом;
+    // отсутствие поля — NULL, как у легаси-строк (C5).
+    expect(
+      db.prepare('SELECT date, time, meeting_type_id, booker FROM meetings ORDER BY date').all(),
+    ).toEqual([
+      { date: '2026-01-05', time: '14:00', meeting_type_id: 1, booker: 'Иван' },
+      { date: '2026-01-06', time: '11:00', meeting_type_id: null, booker: 'Мария' },
+    ]);
+  });
+
   it('повторный create того же (date, time) бросает DuplicateMeetingError', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    repo.create({ date: '2026-01-05', time: '14:00' });
+    repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван');
 
-    expect(() => repo.create({ date: '2026-01-05', time: '14:00' })).toThrow(DuplicateMeetingError);
+    expect(() => repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван')).toThrow(
+      DuplicateMeetingError,
+    );
   });
 
   it('после миграции дубль (date, time) по-прежнему бросает DuplicateMeetingError', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    repo.create({ date: '2026-01-05', time: '14:00' });
+    repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван');
 
-    expect(() => repo.create({ date: '2026-01-05', time: '14:00' })).toThrow(DuplicateMeetingError);
+    expect(() => repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван')).toThrow(
+      DuplicateMeetingError,
+    );
   });
 
   it('не-UNIQUE ошибки БД не маскируются под дубль', () => {
@@ -152,10 +179,14 @@ describe('createRepository', () => {
     // Подменяем схему: CHECK-ограничение, нарушение которого даёт код
     // SQLITE_CONSTRAINT_CHECK, а не SQLITE_CONSTRAINT_UNIQUE.
     db.exec('DROP TABLE meetings');
+    // Колонки — те же, что в целевой схеме: prepare в createRepository их видит,
+    // а CHECK даёт код SQLITE_CONSTRAINT_CHECK, а не UNIQUE.
     db.exec(`CREATE TABLE meetings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,
       time TEXT NOT NULL,
+      meeting_type_id INTEGER REFERENCES meeting_types(id),
+      booker TEXT,
       UNIQUE(date, time),
       CHECK (date <> '')
     )`);
@@ -163,7 +194,7 @@ describe('createRepository', () => {
 
     let thrown: unknown;
     try {
-      repo.create({ date: '', time: '09:00' });
+      repo.create({ date: '', time: '09:00' }, 'Иван');
     } catch (error) {
       thrown = error;
     }
