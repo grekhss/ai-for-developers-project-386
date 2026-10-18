@@ -23,7 +23,14 @@ export function createInMemoryMeetingsApi(seed: Meeting[] = []): MeetingsApi {
     async create(draft) {
       lastId += 1;
 
-      const meeting: Meeting = { id: String(lastId), ...draft };
+      // Ответ собирается поле в поле, как у сервера (S5): тот хранит
+      // meeting_type_id в БД, но не отдаёт его ни в create, ни в list —
+      // спред draft протащил бы тип в Meeting и разошёлся с контрактом.
+      const meeting: Meeting = {
+        id: String(lastId),
+        date: draft.date,
+        time: draft.time,
+      };
       meetings.push(meeting);
 
       return meeting;

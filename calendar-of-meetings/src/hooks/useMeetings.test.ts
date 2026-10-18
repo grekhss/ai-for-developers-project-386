@@ -4,7 +4,7 @@ import dayjs from 'dayjs';
 import { useMeetings } from './useMeetings.ts';
 import { createInMemoryMeetingsApi } from '../lib/meetings/inMemory.ts';
 import type { MeetingsApi } from '../lib/meetings/api.ts';
-import type { Meeting, DateRange } from '../lib/meetings/types.ts';
+import type { Meeting, MeetingDraft, DateRange } from '../lib/meetings/types.ts';
 import { today } from '../lib/date.ts';
 
 /** Дата внутри горизонта, который запрашивает хук. */
@@ -65,6 +65,25 @@ describe('useMeetings', () => {
     ).resolves.toBeNull();
 
     expect(result.current.error).not.toBeNull();
+  });
+
+  it('прокидывает meeting_type_id в api.create без искажений (S5)', async () => {
+    const create = vi.fn<(draft: MeetingDraft) => Promise<Meeting>>((draft) =>
+      Promise.resolve({ id: '1', date: draft.date, time: draft.time })
+    );
+    const api: MeetingsApi = { list: () => Promise.resolve([]), create };
+    const { result } = renderHook(() => useMeetings(api));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const draft: MeetingDraft = { date: futureDate, time: '11:00', meeting_type_id: '7' };
+    const created = await result.current.createMeeting(draft);
+
+    // Хук — прозрачная труба: тип доходит до адаптера тем, чем его собрали.
+    expect(create).toHaveBeenCalledWith(draft);
+    // Ответ сервера тип не несёт (S5 хранит его в БД и не эхоит) —
+    // хук своё поле не добавляет.
+    expect(created).toEqual({ id: '1', date: futureDate, time: '11:00' });
+    expect(result.current.error).toBeNull();
   });
 
   it('после конфликта список перечитан и ошибка показана', async () => {
