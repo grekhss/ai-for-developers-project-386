@@ -48,6 +48,23 @@ describe('createInMemoryMeetingsApi', () => {
     expect(await api.list({ from: '2026-10-01', to: '2026-10-31' })).toEqual([created]);
   });
 
+  it('отдаёт созданную запись в объёме сервера: meeting_type_id в ответ не попадает (S5)', async () => {
+    const api = createInMemoryMeetingsApi();
+
+    const created = await api.create({
+      date: '2026-10-07',
+      time: '15:30',
+      meeting_type_id: '7',
+    });
+
+    // Сервер тип хранит в БД, но и в create, и в list отдаёт ровно
+    // { id, date, time } — фейк зеркалит ответ поле в поле, без спреда draft.
+    expect(created).toEqual({ id: '1', date: '2026-10-07', time: '15:30' });
+    expect(await api.list({ from: '2026-10-01', to: '2026-10-31' })).toEqual([
+      { id: '1', date: '2026-10-07', time: '15:30' },
+    ]);
+  });
+
   it('не выдаёт создаваемой записи идентификатор, занятый сидом', async () => {
     const api = createInMemoryMeetingsApi([
       { id: '2', date: '2026-10-06', time: '10:00' },

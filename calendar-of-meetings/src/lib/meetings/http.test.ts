@@ -85,6 +85,24 @@ describe('createHttpMeetingsApi', () => {
     expect(meeting).toEqual({ id: '2', date: '2026-01-02', time: '10:00' });
   });
 
+  it('create несёт meeting_type_id в теле — тип долетает до сервера (S5)', async () => {
+    let captured: Request | undefined;
+    stubFetch(async (input) => {
+      captured = input as Request;
+      return jsonResponse(201, { id: '3', date: '2026-01-02', time: '10:00' });
+    });
+
+    await createHttpMeetingsApi().create({
+      date: '2026-01-02',
+      time: '10:00',
+      meeting_type_id: '7',
+    });
+
+    expect(await captured?.text()).toBe(
+      JSON.stringify({ date: '2026-01-02', time: '10:00', meeting_type_id: '7' })
+    );
+  });
+
   it('клиент шлёт credentials: include — без них cookie-сессия не уйдёт (D3)', async () => {
     let captured: Request | undefined;
     stubFetch(async (input) => {

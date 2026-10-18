@@ -316,9 +316,9 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-172 теста: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 7, `http` 6),
+175 тестов: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 8, `http` 7),
 `meeting-types` (`inMemory` 7, `http` 8), `session` (`inMemory` 8, `http` 10),
-`useMeetings` 6, `useMeetingTypes` 6, `useSession` 7,
+`useMeetings` 7, `useMeetingTypes` 6, `useSession` 7,
 `MeetingModal` 8, `App` 9 (сквозной сценарий) — и серверные: `repository` 11,
 `meeting-types-repository` 6, `routes` 36, `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
 роутов со спекой и порядка сеанс-гейта). Фронтовые тесты
