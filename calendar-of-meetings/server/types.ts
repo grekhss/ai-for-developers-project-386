@@ -14,6 +14,11 @@ export type Meeting = components['schemas']['Meeting'];
 /** Данные новой записи — всё, кроме идентификатора. */
 export type MeetingDraft = components['schemas']['MeetingDraft'];
 
+/** Тип встречи (S3): id строкой, active — boolean из INTEGER-колонки. */
+export type MeetingType = components['schemas']['MeetingType'];
+/** Данные нового типа встречи (S3): name непуст (непробельных минимум один), description. */
+export type MeetingTypeDraft = components['schemas']['MeetingTypeDraft'];
+
 /**
  * Ниже — типы, взятые от ОПЕРАЦИЙ, а не от моделей: сервер сверяется с тем
  * именно, что контракт пообещал принять на конкретной ручке. Смена тела или
@@ -26,3 +31,6 @@ export type CreateMeetingBody = operations['createMeeting']['requestBody']['cont
 export type ListMeetingsQuery = operations['listMeetings']['parameters']['query'];
 /** Тело POST /api/login: пароль обязателен, bookerName — опционально. */
 export type LoginInput = operations['login']['requestBody']['content']['application/json'];
+/** Тело POST /api/meeting-types (S3): name непуст, description обязателен. */
+export type CreateMeetingTypeBody =
+  operations['createMeetingType']['requestBody']['content']['application/json'];

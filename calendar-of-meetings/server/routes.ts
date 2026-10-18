@@ -1,9 +1,9 @@
 import express from 'express';
-import { DuplicateMeetingError, type MeetingsRepository } from './repository.js';
-import type { AppOptions } from './app.js';
-import { requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
-import type { CreateMeetingBody, ListMeetingsQuery, LoginInput } from './types.js';
-import { isValidDraft, isValidLogin, isValidRange } from './validate.js';
+import { DuplicateMeetingError } from './repository.js';
+import type { AppOptions, AppRepositories } from './app.js';
+import { requireRole, requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
+import type { CreateMeetingBody, CreateMeetingTypeBody, ListMeetingsQuery, LoginInput } from './types.js';
+import { isValidDraft, isValidLogin, isValidMeetingTypeDraft, isValidRange } from './validate.js';
 
 type AuthOptions = Pick<AppOptions, 'adminPassword' | 'guestPassword' | 'secureCookie'>;
 
@@ -14,14 +14,15 @@ type AuthOptions = Pick<AppOptions, 'adminPassword' | 'guestPassword' | 'secureC
  * ниже: в Express 5 req.body может и не быть (парсер не сработал), поэтому без
  * них строка с типом врала бы о рантайме.
  *
- * Пути все статичные, path-параметров нет. ResBody остаётся unknown: ответы
- * различаются по статус-коду (200/201/204 против 400/401/409), и свести их в
- * одну типизированную сумму дороже, чем она стоит.
+ * Параметры путей есть только у деактивации типа (`:id`); остальные ручки
+ * статичны. ResBody остаётся unknown: ответы различаются по статус-коду
+ * (200/201/204 против 400/401/403/409), и свести их в одну типизированную сумму
+ * дороже, чем она стоит.
  */
 type NoParams = Record<string, string>;
 
-/** Роуты API броней. Фабрика: принимает репозиторий, чтобы тесты подавали ':memory:'. */
-export function createRoutes(repo: MeetingsRepository, auth: AuthOptions): express.Router {
+/** Роуты API. Фабрика: принимает репозитории, чтобы тесты подавали ':memory:'. */
+export function createRoutes(repos: AppRepositories, auth: AuthOptions): express.Router {
   const router = express.Router();
   const cookie = { ...sessionCookieOptions(), secure: auth.secureCookie };
 
@@ -52,7 +53,8 @@ export function createRoutes(repo: MeetingsRepository, auth: AuthOptions): expre
     res.json(session);
   });
 
-  // Дальше все /api — только с сессией: requireSession ставится до роутов meetings.
+  // Дальше все /api — только с сессией: requireSession ставится до роутов
+  // meetings и meeting-types. Админ-ручки ниже дополнительно берут requireRole.
   router.use('/api', requireSession);
 
   // Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать
@@ -80,7 +82,7 @@ export function createRoutes(repo: MeetingsRepository, auth: AuthOptions): expre
       res.status(400).json({ error: 'from и to обязательны, формат YYYY-MM-DD' });
       return;
     }
-    res.json(repo.list(req.query.from, req.query.to));
+    res.json(repos.meetings.list(req.query.from, req.query.to));
   });
 
   router.post<NoParams, unknown, CreateMeetingBody>('/api/meetings', (req, res) => {
@@ -90,7 +92,7 @@ export function createRoutes(repo: MeetingsRepository, auth: AuthOptions): expre
     }
 
     try {
-      res.status(201).json(repo.create(req.body));
+      res.status(201).json(repos.meetings.create(req.body));
     } catch (error) {
       if (error instanceof DuplicateMeetingError) {
         res.status(409).json({ error: 'слот уже занят' });
@@ -100,6 +102,54 @@ export function createRoutes(repo: MeetingsRepository, auth: AuthOptions): expre
       throw error;
     }
   });
+
+  // ===== Типы встреч (S3): ручки стоят ПОСЛЕ requireSession — иначе гейт их
+  // не накрывает, и contract.test.ts упадёт на «сеанс-гейт на всех ручках».
+
+  // Список без 403 по контракту (listMeetingTypes: 200 | 401): обе роли видят
+  // список, различается только содержимое — админу все, гостю только активные
+  // (Q2/Q7). Фильтр — по роли из подписанной cookie, которую клиент не подделал.
+  router.get('/api/meeting-types', (req, res) => {
+    const types =
+      req.session?.role === 'admin'
+        ? repos.meetingTypes.listAll()
+        : repos.meetingTypes.listActive();
+    res.json(types);
+  });
+
+  router.post<NoParams, unknown, CreateMeetingTypeBody>(
+    '/api/meeting-types',
+    requireRole('admin'),
+    (req, res) => {
+      if (!isValidMeetingTypeDraft(req.body)) {
+        res.status(400).json({ error: 'name обязателен (непустая строка), description — строка' });
+        return;
+      }
+      // Храним обрезанное имя — как bookerName при логине. @pattern("\\S") в
+      // контракте гарантирует, что после обрезки не останется пустой строки.
+      res.status(201).json(
+        repos.meetingTypes.create({
+          name: req.body.name.trim(),
+          description: req.body.description,
+        }),
+      );
+    },
+  );
+
+  router.post<{ id: string }>(
+    '/api/meeting-types/:id/deactivate',
+    requireRole('admin'),
+    (req, res) => {
+      const deactivated = repos.meetingTypes.deactivate(req.params.id);
+      if (!deactivated) {
+        // В контракте нет 404 — только 400, поэтому неизвестный id — 400.
+        res.status(400).json({ error: 'тип встречи не найден' });
+        return;
+      }
+      // Повторная деактивация идемпотентна: 200 с текущим состоянием (Q7).
+      res.json(deactivated);
+    },
+  );
 
   return router;
 }
