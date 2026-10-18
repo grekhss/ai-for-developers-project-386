@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import type { MeetingTypesRepository } from './meeting-types-repository.js';
 import type { MeetingsRepository } from './repository.js';
 import { createRoutes } from './routes.js';
 
@@ -15,6 +16,16 @@ export interface AppOptions {
   secureCookie?: boolean;
   /** Каталог собранного фронта. По умолчанию dist/ рядом с пакетом. */
   staticDir?: string;
+}
+
+/**
+ * Репозитории, которые получает фабрика: объект, а не позиционный список —
+ * на S3 их стало два, а S4 добавит админ-лист как метод meetings-репо, так что
+ * набор финальный. Тесты подают in-memory БД, prod собирает из одного db.
+ */
+export interface AppRepositories {
+  meetings: MeetingsRepository;
+  meetingTypes: MeetingTypesRepository;
 }
 
 /**
@@ -46,7 +57,7 @@ function assertValidAuth(options: AppOptions): void {
  * приложение на ':memory:'-репозитории. Здесь нет и никакого listen на импорте —
  * его делает только index.ts.
  */
-export function createApp(repo: MeetingsRepository, options: AppOptions): express.Express {
+export function createApp(repos: AppRepositories, options: AppOptions): express.Express {
   assertValidAuth(options);
 
   const app = express();
@@ -54,7 +65,7 @@ export function createApp(repo: MeetingsRepository, options: AppOptions): expres
   // Секрет подписи cookie — из инжектированного конфига; req.signedCookies
   // появляется только с этим middleware (D3).
   app.use(cookieParser(options.sessionSecret));
-  app.use(createRoutes(repo, { ...options, secureCookie: options.secureCookie ?? false }));
+  app.use(createRoutes(repos, { ...options, secureCookie: options.secureCookie ?? false }));
 
   // Статику отдаём из dist/ (в dev её раздаёт Vite; если dist/ ещё нет — запросы
   // просто уходят дальше). Путь — от файла app.js, а не от cwd: и в dev

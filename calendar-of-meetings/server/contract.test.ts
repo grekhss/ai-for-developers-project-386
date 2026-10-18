@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { createRoutes } from './routes.js';
 import { createRepository } from './repository.js';
+import { createMeetingTypesRepository } from './meeting-types-repository.js';
 import { createDatabase } from './db.js';
 
 // Охранитель артефактов контракта (K1, ADR-0004; статус-коды — K2, D5; сверка
@@ -25,9 +26,10 @@ const serverGen = read('./contract.gen.ts');
 const toOpenApiPath = (path: string): string => path.replace(/:([^/]+)/g, '{$1}');
 
 /**
- * Все ручки API — их набор живёт в contract/main.tsp. Четыре последних описаны
- * в контракте заранее и сервером пока не реализованы (S3/S4): контракт
- * намеренно идёт впереди, чтобы SDK (K3) собрал их до серверной части.
+ * Все ручки API — их набор живёт в contract/main.tsp. Последняя
+ * (listPlannedMeetings, S4) описана в контракте заранее и сервером пока не
+ * реализована: контракт намеренно идёт впереди, чтобы SDK (K3) собрал её до
+ * серверной части.
  */
 const OPERATIONS = [
   'login',
@@ -109,11 +111,17 @@ type MountedRoute = { path: string; method: string };
 function inspectRoutes(): { routes: MountedRoute[]; unguardedRoutes: MountedRoute[] } {
   const db = createDatabase(':memory:');
   try {
-    const router = createRoutes(createRepository(db), {
-      adminPassword: 'admin-secret',
-      guestPassword: 'guest-secret',
-      secureCookie: false,
-    });
+    const router = createRoutes(
+      {
+        meetings: createRepository(db),
+        meetingTypes: createMeetingTypesRepository(db),
+      },
+      {
+        adminPassword: 'admin-secret',
+        guestPassword: 'guest-secret',
+        secureCookie: false,
+      },
+    );
 
     const routes: MountedRoute[] = [];
     const unguardedRoutes: MountedRoute[] = [];
@@ -192,7 +200,7 @@ describe('артефакты контракта API', () => {
     const documented = specRoutes(document);
     const { routes } = inspectRoutes();
 
-    // Спека может идти впереди сервера (S3/S4), поэтому проверяем только
+    // Спека может идти впереди сервера (S4), поэтому проверяем только
     // подмножество: роут есть — он обязан быть в спеке. Обратное неверно.
     expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) {

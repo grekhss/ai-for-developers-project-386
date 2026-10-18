@@ -7,7 +7,7 @@ import { join } from 'node:path';
 // `Ajv2020` есть и в `.d.ts`, и в `module.exports`, так что только оно совпадает
 // в типах и в рантайме. Путь обязан быть полным, с `.js`, — иначе TS2307.
 import { Ajv2020 } from 'ajv/dist/2020.js';
-import type { CreateMeetingBody, ListMeetingsQuery, LoginInput } from './types.js';
+import type { CreateMeetingBody, CreateMeetingTypeBody, ListMeetingsQuery, LoginInput } from './types.js';
 
 /**
  * Форматная валидация по схемам контракта (K4, ADR-0005).
@@ -59,6 +59,7 @@ function schemaOf(model: string): object {
 const validDraft = ajv.compile<CreateMeetingBody>(schemaOf('MeetingDraft'));
 const validRange = ajv.compile<ListMeetingsQuery>(schemaOf('DateRange'));
 const validLogin = ajv.compile<LoginInput>(schemaOf('LoginInput'));
+const validMeetingTypeDraft = ajv.compile<CreateMeetingTypeBody>(schemaOf('MeetingTypeDraft'));
 
 /**
  * false на undefined/не-объекте: в Express 5 req.body не инициализируется в {},
@@ -90,4 +91,13 @@ export function isValidRange(query: unknown): query is ListMeetingsQuery {
 /** Вход: пароль непуст (минимум один непробельный символ), bookerName — строка, если передан. */
 export function isValidLogin(body: unknown): body is LoginInput {
   return isObject(body) && validLogin(body);
+}
+
+/**
+ * Тело POST /api/meeting-types (S3): name — непустая строка с минимум одним
+ * непробельным символом (`'   '` не проходит — @pattern в main.tsp, тот же
+ * приём, что у пароля в K4), description — строка, обязана присутствовать.
+ */
+export function isValidMeetingTypeDraft(body: unknown): body is CreateMeetingTypeBody {
+  return isObject(body) && validMeetingTypeDraft(body);
 }

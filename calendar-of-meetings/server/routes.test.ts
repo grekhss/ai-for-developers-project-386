@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from './app.js';
 import { createDatabase } from './db.js';
+import { createMeetingTypesRepository } from './meeting-types-repository.js';
 import { createRepository } from './repository.js';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -17,15 +18,19 @@ const AUTH = {
   sessionSecret: 'sign-me',
 } as const;
 
-function repo() {
-  return createRepository(createDatabase(':memory:'));
+function repos() {
+  const db = createDatabase(':memory:');
+  return {
+    meetings: createRepository(db),
+    meetingTypes: createMeetingTypesRepository(db),
+  };
 }
 
 // Интеграция собирается как в проде: createApp(createRepository(':memory:')).
 // Через index.ts не ходим — он биндит порт и открывает файловую БД.
 // Все /api за requireSession, поэтому сразу логинимся админом и отдаём cookie.
 async function createTestApp(): Promise<{ baseUrl: string; adminCookie: string }> {
-  const app = createApp(repo(), { ...AUTH });
+  const app = createApp(repos(), { ...AUTH });
   const server = app.listen(0);
   servers.push(server);
   await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -79,15 +84,15 @@ describe('createApp: валидация auth-конфига', () => {
   const valid = { adminPassword: 'admin-secret', guestPassword: 'guest-secret', sessionSecret: 'sign-me' };
 
   it('падает, когда пароли совпадают — роль не определить', () => {
-    expect(() => createApp(repo(), { ...valid, guestPassword: valid.adminPassword })).toThrow(/не должны совпадать/);
+    expect(() => createApp(repos(), { ...valid, guestPassword: valid.adminPassword })).toThrow(/не должны совпадать/);
   });
 
   it('падает на пустом или «пробельном» пароле/секрете', () => {
     for (const key of ['adminPassword', 'guestPassword', 'sessionSecret'] as const) {
       for (const value of ['', '   ']) {
-        expect(() => createApp(repo(), { ...valid, [key]: value })).toThrow(/обязательны/);
+        expect(() => createApp(repos(), { ...valid, [key]: value })).toThrow(/обязательны/);
       }
-      expect(() => createApp(repo(), { ...valid, [key]: undefined })).toThrow(/обязательны/);
+      expect(() => createApp(repos(), { ...valid, [key]: undefined })).toThrow(/обязательны/);
     }
   });
 });
@@ -186,8 +191,10 @@ describe('routes /api/auth', () => {
   });
 });
 
-describe('requireRole: ролевой гейт (пока не применён на роутах — S3/S4)', () => {
-  // Probe-приложение: один роут за requireSession + requireRole('admin').
+describe('requireRole: ролевой гейт (изолированный probe; на роутах — S3/S4)', () => {
+  // Probe-приложение: один роут за requireSession + requireRole('admin') — так
+  // middleware проверяется отдельно от логики конкретных роутов; интеграционные
+  // проверки гейта на реальных ручках живут в describe о /api/meeting-types (S3).
   async function createProbe(): Promise<{ baseUrl: string }> {
     const app = express();
     app.use(express.json());
@@ -234,6 +241,170 @@ describe('requireRole: ролевой гейт (пока не применён �
     expect((await fetch(`${baseUrl}/api/admin-only`, { headers: { Cookie: guest } })).status).toBe(403);
 
     expect((await fetch(`${baseUrl}/api/admin-only`)).status).toBe(401);
+  });
+});
+
+describe('routes /api/meeting-types (за requireSession, S3)', () => {
+  /** Гостевая cookie: login отдаёт её тем же порядком, что и админская. */
+  async function guestCookie(baseUrl: string): Promise<string> {
+    const response = await fetch(`${baseUrl}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: AUTH.guestPassword, bookerName: 'Иван' }),
+    });
+    if (response.status !== 200) throw new Error('setup: гостевой логин не прошёл');
+    const [setCookie] = response.headers.getSetCookie();
+    return setCookie.split(';')[0];
+  }
+
+  function getTypes(baseUrl: string, cookie?: string) {
+    return fetch(`${baseUrl}/api/meeting-types`, {
+      headers: cookie === undefined ? undefined : { Cookie: cookie },
+    });
+  }
+
+  function postType(baseUrl: string, cookie: string | undefined, body: unknown, path = '/api/meeting-types') {
+    return fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookie === undefined ? {} : { Cookie: cookie }),
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('все три ручки без сессии отвечают 401', async () => {
+    const { baseUrl } = await createTestApp();
+
+    expect((await getTypes(baseUrl)).status).toBe(401);
+    expect((await postType(baseUrl, undefined, { name: 'X', description: '' })).status).toBe(401);
+    // requireSession стоит до requireRole: без сессии — 401, а не 403.
+    expect((await postType(baseUrl, undefined, {}, '/api/meeting-types/1/deactivate')).status).toBe(401);
+  });
+
+  it('список без типов — пустой массив, а не объект-обёртка', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    const response = await getTypes(baseUrl, adminCookie);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it('админ видит все типы, гость — только активные', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '' });
+    await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+
+    const adminResponse = await getTypes(baseUrl, adminCookie);
+    expect(await adminResponse.json()).toEqual([
+      { id: '1', name: 'Консультация', description: '', active: false },
+      { id: '2', name: 'Собеседование', description: '', active: true },
+    ]);
+
+    // Гость: деактивированный тип не попадает в список (Q7).
+    const guest = await getTypes(baseUrl, await guestCookie(baseUrl));
+    expect(await guest.json()).toEqual([
+      { id: '2', name: 'Собеседование', description: '', active: true },
+    ]);
+  });
+
+  it('POST админом создаёт активный тип и обрезает имя', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    const response = await postType(baseUrl, adminCookie, {
+      name: '  Консультация  ',
+      description: '30 минут',
+    });
+
+    expect(response.status).toBe(201);
+    // Имя обрезано — как bookerName при логине; новый тип всегда активен.
+    expect(await response.json()).toEqual({
+      id: '1',
+      name: 'Консультация',
+      description: '30 минут',
+      active: true,
+    });
+  });
+
+  it('POST гостем отвечает 403', async () => {
+    const { baseUrl } = await createTestApp();
+    const response = await postType(baseUrl, await guestCookie(baseUrl), {
+      name: 'Консультация',
+      description: '',
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'недостаточно прав' });
+  });
+
+  it('POST невалидного тела отвечает 400', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    const invalidBodies = [
+      {},
+      { name: 'Консультация' }, // нет description — он обязателен в контракте
+      { description: '' }, // нет name
+      { name: '', description: '' }, // пустое имя (@minLength)
+      { name: '   ', description: '' }, // одно пробельное имя — @pattern("\\S") в main.tsp
+      { name: 42, description: '' },
+      { name: 'Консультация', description: null },
+      // Случай не-объекта (голая JSON-строка и т.п.) не включён: strict-режим
+      // express.json отклоняет его ещё на парсинге (400 от body-parser, HTML) —
+      // этот путь уже покрыт в meetings-тесте.
+    ];
+
+    for (const body of invalidBodies) {
+      const response = await postType(baseUrl, adminCookie, body);
+      expect(response.status, `тело ${JSON.stringify(body)}`).toBe(400);
+      expect(await response.json(), `тело ${JSON.stringify(body)}`).toEqual({
+        error: 'name обязателен (непустая строка), description — строка',
+      });
+    }
+  });
+
+  it('деактивация админом: 200 с active: false, повтор идемпотентен', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+
+    const first = await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      id: '1',
+      name: 'Консультация',
+      description: '',
+      active: false,
+    });
+
+    // В контракте нет ни 404, ни 409: повторная деактивация — 200, состояние прежнее (Q7).
+    const second = await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+    expect(second.status).toBe(200);
+    const repeated = (await second.json()) as { active: boolean };
+    expect(repeated.active).toBe(false);
+  });
+
+  it('деактивация гостем отвечает 403', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+
+    const response = await postType(
+      baseUrl,
+      await guestCookie(baseUrl),
+      {},
+      '/api/meeting-types/1/deactivate',
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('деактивация неизвестного или нечислового id отвечает 400', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+
+    for (const id of ['999', 'abc']) {
+      const response = await postType(baseUrl, adminCookie, {}, `/api/meeting-types/${id}/deactivate`);
+      expect(response.status, `id ${id}`).toBe(400);
+      expect(await response.json(), `id ${id}`).toEqual({ error: 'тип встречи не найден' });
+    }
+    // Существующий тип при этом не тронут.
+    const types = await getTypes(baseUrl, adminCookie);
+    expect(((await types.json()) as Array<{ active: boolean }>)[0]?.active).toBe(true);
   });
 });
 

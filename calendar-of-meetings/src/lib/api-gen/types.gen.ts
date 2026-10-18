@@ -104,7 +104,9 @@ export type MeetingType = {
  */
 export type MeetingTypeDraft = {
     /**
-     * Название типа — непустая строка.
+     * Название типа — непустая строка, минимум один непробельный символ: `'   '`
+     * не проходит, хотя с одним лишь `@minLength(1)` прошло бы (тот же приём,
+     * что у `LoginInput.password`, K4).
      */
     name: string;
     /**

@@ -259,8 +259,8 @@ Overflow answers, and your own priors. Verified against
   сужает union по `error !== undefined` и пробрасывает исходное сетевое
   исключение как есть. Порт `MeetingsApi` и сигнатуры не менялись — UI их не
   замечает.
-- **В спеке есть ещё не реализованные ручки** (`/api/meeting-types`,
-  `/api/meeting-types/{id}/deactivate`, `/api/admin/meetings` — S3/S4): контракт намеренно
+- **В спеке есть ещё не реализованная ручка** (`/api/admin/meetings` — S4; три ручки
+  `/api/meeting-types` описаны и реализованы в S3): контракт намеренно
   идёт впереди сервера, чтобы SDK (K3) собрал их до реализации. Их статус-коды и присутствие
   держит `server/contract.test.ts`, который сверяет каждую операцию с обязательным набором кодов.
 - **`server/contract.test.ts` сверяет роуты со спекой** (K4): интроспектирует
@@ -361,15 +361,17 @@ calendar-of-meetings/
 ├── server/                 # express + better-sqlite3; импорты — с .js-суффиксом
 │   ├── index.ts            # wiring: БД → createApp → listen; логики нет
 │   ├── app.ts              # createApp: express.json, роуты, статика dist/
-│   ├── routes.ts           # GET/POST /api/meetings
+│   ├── routes.ts           # GET/POST /api/meetings + ручки типов встреч (S3)
 │   ├── repository.ts       # createRepository: list/create; UNIQUE → DuplicateMeetingError
+│   ├── meeting-types-repository.ts  # createMeetingTypesRepository: create/deactivate/listActive/listAll
 │   ├── db.ts               # createDatabase + defaultDbPath (data/meetings.sqlite)
 │   ├── validate.ts         # форматная валидация по схемам контракта через ajv (не домен!)
 │   ├── contract.gen.ts     # сгенерированные TS-типы контракта (не править)
-│   ├── types.ts            # alias'ы Meeting/MeetingDraft + тела/параметры из operations
+│   ├── types.ts            # alias'ы Meeting/MeetingDraft/MeetingType + тела/параметры из operations
 │   ├── contract.test.ts    # @vitest-environment node: артефакты контракта + сверка роутов со спекой
 │   ├── repository.test.ts  # @vitest-environment node
-│   └── routes.test.ts      # интеграция: createApp(':memory:') + listen(0) + fetch
+│   ├── meeting-types-repository.test.ts  # @vitest-environment node
+│   └── routes.test.ts      # интеграция: createApp({ meetings, meetingTypes }, …) + listen(0) + fetch
 └── src/
     ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
     ├── App.tsx             # page-level state and layout; renders components/
