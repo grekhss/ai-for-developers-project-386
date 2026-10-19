@@ -152,7 +152,7 @@ npm 10 locally.
 - **Mantine v9 throws without `MantineProvider` in the tree** ("MantineProvider
   was not found in component tree") — every render test must wrap the component
   it renders. `DatesProvider` is only needed for date widgets that read locale
-  or weekend days from context; a `Modal` with a `TimeGrid` does not need it.
+  or weekend days from context; the `TimeSlots` grid does not need it.
 - `TimeGrid` slots are `<button>`s whose text is the formatted time, so
   `getByRole('button', { name: '09:00' })` works. Taken slots are `disabled`
   **and** carry `data-disabled`; the active slot gets Mantine's `active`
@@ -167,18 +167,24 @@ npm 10 locally.
   The header shows the *current* month, so a test asserting "октября" passes in
   October and fails in November. `/^\d{1,2} [а-яё]+ \d{4}$/` proves Russian
   locale in any month.
-- **`App` takes optional `api` and `sessionApi` props, and both are load-bearing
-  in tests.** `lib/meetings/api.ts` exports a module-level singleton, so without
+- **`App` takes optional `api`, `typesApi` and `sessionApi` props, and all three
+  are load-bearing in tests.** `lib/meetings/api.ts` exports a module-level
+  singleton, so without
   a per-test `createInMemoryMeetingsApi()` the meetings leak between test cases
   in the same file and a slot booked by an earlier test is `disabled` in a later
   one — the click silently does nothing and the test times out on a `findBy`.
+  `lib/meeting-types/api.ts` is a singleton the same way: since F7 the guest
+  view loads types right after login, and without a fake that request dies on
+  jsdom's `Request` and paints the view into a load-error state.
   `lib/session/api.ts` is a singleton the same way, and the whole app is gated
   by login (Q12a), so every render test also passes `sessionApi` — seeded
   guest (`createInMemorySessionApi({ role: 'guest', bookerName: 'Тест' })`) for
   calendar scenarios, `createInMemorySessionApi(null)` to reach the login
   screen. The `renderApp` helper in `App.test.tsx` awaits the end of session
   restore ("Восстановление сессии…") before returning; without it the first
-  query races the `me()` promise.
+  query races the `me()` promise. The `renderGuestView` helper in
+  `GuestView.test.tsx` does the same for the types load ("Загрузка типов
+  встреч…").
 - **Mantine adds an asterisk inside the label of a `required` field** (an
   `aria-hidden` `<span>` with ` * `), so the normalized label text is «Пароль *»
   and `getByLabelText('Пароль')` finds nothing. Query with a regex
@@ -405,11 +411,12 @@ calendar-of-meetings/
     ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
     ├── App.tsx             # гейт по сессии + шапка; рендерит LoginScreen или GuestView
     ├── App.test.tsx        # colocated vitest tests
-    ├── GuestView.tsx       # гостевой вид: календарь + модалка; state букинга и useMeetings
+    ├── GuestView.tsx       # гостевой вид: Stepper «Тип → Время → Готово» (F7); state букинга + оба хука
+    ├── GuestView.test.tsx  # сценарии букинга: тип, слот, подтверждение, Alert'и
     ├── components/         # rendering only; props in, no domain rules
-    │   ├── MeetingModal.tsx   # slot picker in a Modal; controlled time prop
-    │   ├── MeetingModal.test.tsx
     │   ├── MeetingCalendar.tsx  # the only component that renders date selection
+    │   ├── TimeSlots.tsx   # инлайн-сетка TimeGrid под календарём (D4); пустое состояние — текст
+    │   ├── TimeSlots.test.tsx
     │   └── LoginScreen.tsx   # форма входа (D4); поля формы держит App, компонент рендерит
     ├── hooks/              # React state around lib; the only place with useState
     │   ├── useMeetings.ts  # load/create meetings; takes a MeetingsApi so tests inject a fake
@@ -468,21 +475,25 @@ Russian?", it imports from `lib/`, it does not re-derive it. Keep
 rest of the app passes plain `'YYYY-MM-DD'` strings around.
 
 **Page-level components own only UI state; `lib` state is never mirrored.**
-`GuestView` holds `selectedDate`, `time`, and `lastBooked` (a `MeetingDraft`
-kept only to render the «Запись: …» line — `Meeting` carries no creation
-timestamp, so "the newest one" isn't derivable from the sorted array); `App`
-держит только поля формы входа (пароль, имя гостя, «Я гость») — сама сессия
-принадлежит `useSession`, а не странице. Resetting on date change happens in
-the click handler, not in an effect:
+`GuestView` (F7) держит шаг степпера, `typeId`, `selectedDate`, `time` и
+`lastBooked` — снимок `{ typeName, date, time }` только для Alert'а «Запись:
+…» (у `Meeting` нет ни имени типа, ни времени создания, поэтому «самая
+свежая» из отсортированного массива не выводится); `App` держит только поля
+формы входа (пароль, имя гостя, «Я гость») — сама сессия принадлежит
+`useSession`, а не странице. Сброс при смене выбора happens in the click
+handler, not in an effect — любое изменение типа/даты/слота гасит строку
+успеха, а дата ещё и слот:
 
 ```tsx
 onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date); }}
 ```
 
-`MeetingModal` is deliberately always mounted (so Mantine keeps its close
-animation) and takes `date: string | null` where `null` means closed — no `key`
-remount, no local `useState` for the slot. `takenTimes` comes from the meetings
-for that date, which is what makes a booked slot unselectable on reopen.
+Ступени переключаются кнопками «Далее» с проверками выбора, назад — кликом по
+пройденному шагу: `allowNextStepsSelect={false}` не даёт прыгнуть на «Готово»
+без даты и времени. `TimeSlots` получает `takenTimes` из записей выбранного
+дня — так занятый слот не выбирается и после перечитывания списка. Через
+`createMeeting` гостевой флоу всегда прокидывает `meeting_type_id` (контракт
+намеренно допускает запись без типа для легаси, но F7-сценарий её не создаёт).
 
 **Data access goes through the `api.ts` interfaces** (`lib/meetings/api.ts`,
 `lib/meeting-types/api.ts`, `lib/session/api.ts`), never straight to a concrete
