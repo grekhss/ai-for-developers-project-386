@@ -11,6 +11,8 @@ import type { MeetingTypesApi } from './lib/meeting-types/api.ts';
 import { createInMemorySessionApi } from './lib/session/inMemory.ts';
 import type { SessionApi } from './lib/session/api.ts';
 import type { Session } from './lib/session/types.ts';
+import { createInMemoryPlannedMeetingsApi } from './lib/planned-meetings/inMemory.ts';
+import type { PlannedMeetingsApi } from './lib/planned-meetings/api.ts';
 import { APP_LOCALE } from './lib/date.ts';
 
 const DATES_SETTINGS = { locale: APP_LOCALE };
@@ -27,6 +29,11 @@ function guestSession(): SessionApi {
   return createInMemorySessionApi({ role: 'guest', bookerName: 'Тест' });
 }
 
+/** Пустой админский список: админская ветка грузит его сразу после входа (F6). */
+function defaultPlannedApi(): PlannedMeetingsApi {
+  return createInMemoryPlannedMeetingsApi();
+}
+
 /** Никогда не отвечает — для проверки состояния «восстановление сессии». */
 function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
@@ -38,11 +45,12 @@ async function renderApp(
   api: MeetingsApi = createInMemoryMeetingsApi(),
   sessionApi: SessionApi = guestSession(),
   typesApi: MeetingTypesApi = defaultTypesApi(),
+  plannedApi: PlannedMeetingsApi = defaultPlannedApi(),
 ) {
   const view = render(
     <MantineProvider defaultColorScheme="dark">
       <DatesProvider settings={DATES_SETTINGS}>
-        <App api={api} typesApi={typesApi} sessionApi={sessionApi} />
+        <App api={api} typesApi={typesApi} plannedApi={plannedApi} sessionApi={sessionApi} />
       </DatesProvider>
     </MantineProvider>
   );
@@ -110,9 +118,12 @@ describe('календарь встреч', () => {
     // Переключатель «Я гость» выключен — имя в запрос не попадает.
     expect(login).toHaveBeenCalledWith({ password: 'admin' });
     expect(await screen.findByText('Админ')).toBeInTheDocument();
-    expect(screen.getByText('Админ-панель')).toBeInTheDocument();
+    // Админ-панель вместо заглушки (F6): обе вкладки D4.
+    expect(screen.getByRole('tab', { name: 'Типы встреч' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Запланированные встречи' })).toBeInTheDocument();
     // Админ не записывается на встречи (Q12c) — гостевого степпера он не видит.
-    expect(screen.queryByText('Тип')).not.toBeInTheDocument();
+    // Проверяем по шагу «Готово»: колонка «Тип» теперь есть и в админ-таблице.
+    expect(screen.queryByText('Готово')).not.toBeInTheDocument();
   });
 
   it('неверный пароль: ошибка над формой, форма остаётся', async () => {

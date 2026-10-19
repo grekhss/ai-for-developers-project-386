@@ -15,4 +15,14 @@ window.matchMedia = (query: string): MediaQueryList => ({
   dispatchEvent: () => false,
 })
 
+// jsdom не реализует ResizeObserver, а Mantine's ScrollArea (внутри Modal и
+// Table.ScrollContainer, появляющихся в админ-панели F6) зовёт его в
+// use-resize-observer — без заглушки рендер падает с ReferenceError.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+globalThis.ResizeObserver = ResizeObserverStub
+
 afterEach(cleanup)

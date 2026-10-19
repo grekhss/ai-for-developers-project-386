@@ -203,3 +203,62 @@ describe('createRepository', () => {
     expect(thrown).not.toBeInstanceOf(DuplicateMeetingError);
   });
 });
+
+describe('createRepository: listPlanned (S4/Q6)', () => {
+  it('склеивает встречу с названием типа и именем записавшегося, сортирует (date, time)', () => {
+    const db = createDatabase(':memory:');
+    // FK включён: тип обязан существовать до ссылки на него (как в тесте выше).
+    db.prepare('INSERT INTO meeting_types (name, description) VALUES (?, ?)').run('Консультация', '');
+    const repo = createRepository(db);
+
+    repo.create({ date: '2026-05-02', time: '11:00', meeting_type_id: '1' }, 'Иван');
+    repo.create({ date: '2026-05-01', time: '10:00', meeting_type_id: '1' }, 'Мария');
+    repo.create({ date: '2026-05-02', time: '09:00', meeting_type_id: '1' }, 'Пётр');
+
+    expect(repo.listPlanned('2026-05-01')).toEqual([
+      { date: '2026-05-01', time: '10:00', type: 'Консультация', booker: 'Мария' },
+      { date: '2026-05-02', time: '09:00', type: 'Консультация', booker: 'Пётр' },
+      { date: '2026-05-02', time: '11:00', type: 'Консультация', booker: 'Иван' },
+    ]);
+  });
+
+  it('легаси-строка без типа и без автора даёт null в обеих колонках (C5)', () => {
+    const db = createDatabase(':memory:');
+    // Прямая вставка: create() всегда пишет booker из сессии, а такая строка
+    // пришла из старой схемы, где обеих колонок ещё не было (S1, C2).
+    db.prepare('INSERT INTO meetings (date, time) VALUES (?, ?)').run('2026-05-01', '10:00');
+    const repo = createRepository(db);
+
+    // LEFT JOIN, а не INNER: строка не пропадает, обе колонки — null; UI
+    // нарисует «—» (F6).
+    expect(repo.listPlanned('2026-05-01')).toEqual([
+      { date: '2026-05-01', time: '10:00', type: null, booker: null },
+    ]);
+  });
+
+  it('деактивированный тип у старой встречи сохраняет название (Q7)', () => {
+    const db = createDatabase(':memory:');
+    db.prepare('INSERT INTO meeting_types (name, description, active) VALUES (?, ?, 0)').run('Разбор', '');
+    const repo = createRepository(db);
+    repo.create({ date: '2026-05-01', time: '10:00', meeting_type_id: '1' }, 'Иван');
+
+    // Деактивация — конец жизненного цикла типа, но не обезличивание истории:
+    // имя остаётся в строке списка (фильтра по active здесь нет).
+    expect(repo.listPlanned('2026-05-01')).toEqual([
+      { date: '2026-05-01', time: '10:00', type: 'Разбор', booker: 'Иван' },
+    ]);
+  });
+
+  it('отбрасывает прошлое, границу from включает, верхней границы нет (Q6/C5)', () => {
+    const repo = createRepository(createDatabase(':memory:'));
+    repo.create({ date: '2026-04-30', time: '10:00' }, 'Иван');
+    repo.create({ date: '2026-05-01', time: '10:00' }, 'Иван');
+    repo.create({ date: '2027-01-01', time: '10:00' }, 'Иван');
+
+    // «admin unlimited» — окна в 14 дней нет, прошедшее отсекает только from.
+    expect(repo.listPlanned('2026-05-01')).toEqual([
+      { date: '2026-05-01', time: '10:00', type: null, booker: 'Иван' },
+      { date: '2027-01-01', time: '10:00', type: null, booker: 'Иван' },
+    ]);
+  });
+});

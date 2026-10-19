@@ -20,6 +20,13 @@ export type MeetingType = components['schemas']['MeetingType'];
 export type MeetingTypeDraft = components['schemas']['MeetingTypeDraft'];
 
 /**
+ * Строка админского списка (S4/Q6): LEFT JOIN встреч с типами, поэтому у
+ * легаси-записи без типа `type` null, а у старой записи без автора — `booker`
+ * (C5). Отдаётся как есть: список уже разложен по колонкам репозиторием.
+ */
+export type PlannedMeeting = components['schemas']['PlannedMeeting'];
+
+/**
  * Ниже — типы, взятые от ОПЕРАЦИЙ, а не от моделей: сервер сверяется с тем
  * именно, что контракт пообещал принять на конкретной ручке. Смена тела или
  * query в contract/main.tsp поэтому роняет `tsc`, а не вылезает в рантайме.

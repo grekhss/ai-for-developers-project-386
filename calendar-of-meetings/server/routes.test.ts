@@ -103,6 +103,19 @@ async function loginAsGuest(baseUrl: string, bookerName = 'Иван'): Promise<s
   return setCookie.split(';')[0];
 }
 
+/**
+ * 'YYYY-MM-DD' в локальной зоне, сдвинутый на offsetDays. Рекомпозиция «сегодня»
+ * независимо от server/date.ts (T3): тест сдвигает границу сам, а не читает
+ * готовое значение проверяемого кода.
+ */
+function localDate(offsetDays: number): string {
+  const now = new Date();
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offsetDays);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 /** POST /api/meeting-types: cookie опциональна — так проверяется 401 без сессии. */
 function postType(
   baseUrl: string,
@@ -659,6 +672,52 @@ describe('routes /api/meetings (за requireSession)', () => {
     expect(await response.json()).toEqual([
       { id: '2', date: '2026-01-01', time: '11:00' },
       { id: '1', date: '2026-01-02', time: '10:00' },
+    ]);
+  });
+});
+
+describe('routes /api/admin/meetings (S4, только админ)', () => {
+  /** GET админского списка: cookie опциональна — так проверяется 401 без сессии. */
+  function getPlanned(baseUrl: string, cookie?: string) {
+    return fetch(`${baseUrl}/api/admin/meetings`, {
+      headers: cookie === undefined ? undefined : { Cookie: cookie },
+    });
+  }
+
+  it('без сессии 401, гостем 403, админом 200 с пустым списком (T2)', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+
+    expect((await getPlanned(baseUrl)).status).toBe(401);
+    // requireSession стоит до requireRole: гость доходит до ролевого гейта (403),
+    // аноним обрывается раньше (401).
+    expect((await getPlanned(baseUrl, await loginAsGuest(baseUrl))).status).toBe(403);
+
+    const response = await getPlanned(baseUrl, adminCookie);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it('отдаёт join-DTO: тип и автор у новой записи, «null» у легаси; прошлое отсечено (C5/Q6)', async () => {
+    const { baseUrl, adminCookie, db } = await createTestApp();
+    const guest = await loginAsGuest(baseUrl, 'Иван');
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '30 минут' });
+
+    // Завтрашняя типизированная запись — через реальный POST: booker придёт из
+    // сессии, тип сохранится.
+    await postMeeting(baseUrl, guest, {
+      date: localDate(1),
+      time: '09:00',
+      meeting_type_id: '1',
+    });
+    // Легаси-строки — только прямой вставкой: без типа и автора (C5) и в прошлом.
+    db.prepare('INSERT INTO meetings (date, time) VALUES (?, ?)').run(localDate(0), '10:00');
+    db.prepare('INSERT INTO meetings (date, time) VALUES (?, ?)').run(localDate(-1), '11:00');
+
+    // Сегодняшняя (type/booker null) и завтрашняя (join) — в порядке (date, time);
+    // вчерашняя не попадает, хотя она в базе.
+    expect(await (await getPlanned(baseUrl, adminCookie)).json()).toEqual([
+      { date: localDate(0), time: '10:00', type: null, booker: null },
+      { date: localDate(1), time: '09:00', type: 'Консультация', booker: 'Иван' },
     ]);
   });
 });
