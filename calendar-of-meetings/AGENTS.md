@@ -312,6 +312,14 @@ Overflow answers, and your own priors. Verified against
 
 ## Conventions
 
+- **Дев-обход авторизации включается только конфигом.** `AUTH_DISABLED=1` (см.
+  `.env.example`) отключает проверку пароля: роль берётся из URL (`/admin` —
+  владелец, остальное — гость), `main.tsx` кладёт её в неподписанную cookie
+  `dev_role`, а сервер ставит `devSessionGate` вместо `requireSession`
+  (`server/session.ts`). Обычный вход (подписанная сессия, роль-по-паролю,
+  ADR-0006) не трогается, флаг по умолчанию выключен и в проде его быть не
+  должно. Не превращать обход в дефолт и не вычищать как мёртвый код — он нужен
+  для локальной проверки корректности.
 - **Server imports carry the `.js` suffix** (`server/routes.ts` imports
   `./repository.js`). `moduleResolution: nodenext` + ESM require it, and both
   `tsx` and vitest resolve `.js` → `.ts` for TS importers. Don't mix with `src/`,
@@ -408,11 +416,11 @@ calendar-of-meetings/
 ├── public/favicon.svg      # served at /
 ├── server/                 # express + better-sqlite3; импорты — с .js-суффиксом
 │   ├── index.ts            # wiring: БД → createApp → listen; логики нет
-│   ├── app.ts              # createApp: express.json, роуты, статика dist/
+│   ├── app.ts              # createApp: express.json, роуты, статика dist/ + SPA-fallback для /admin
 │   ├── routes.ts           # /api/meetings (S5) + /api/meeting-types (S3) + GET /api/admin/meetings (S4, за requireRole('admin'))
 │   ├── repository.ts       # createRepository: list/create(draft, booker)/listPlanned(from); UNIQUE → DuplicateMeetingError
 │   ├── meeting-types-repository.ts  # createMeetingTypesRepository: create/deactivate/listActive/listAll
-│   ├── session.ts          # подпись/разбор session-cookie + requireSession/requireRole (F2/F5)
+│   ├── session.ts          # подпись/разбор session-cookie + requireSession/requireRole (F2/F5) + дев-обход AUTH_DISABLED
 │   ├── date.ts             # today() — местная дата 'YYYY-MM-DD'; единственные часы в server/ (S4)
 │   ├── db.ts               # createDatabase + defaultDbPath (data/meetings.sqlite)
 │   ├── validate.ts         # форматная валидация по схемам контракта через ajv (не домен!)
@@ -449,6 +457,8 @@ calendar-of-meetings/
     │   ├── api-gen/        # сгенерированный клиентский SDK hey-api (не править)
     │   ├── date.ts         # APP_LOCALE, today, now, addDays, isWeekend, isPast, isBookable, formatDateRu
     │   ├── date.test.ts
+    │   ├── devRole.ts      # роль по URL для дев-обхода (AUTH_DISABLED); cookie ставит main.tsx
+    │   ├── devRole.test.ts
     │   ├── window.ts       # гостевое окно Q5 (14 дней): WINDOW_DAYS, windowEnd, isBookableDay, isBookableSlot
     │   ├── window.test.ts
     │   ├── slots.ts        # generateTimeSlots — workday bounds and slot length

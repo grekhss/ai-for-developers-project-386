@@ -1,4 +1,6 @@
-import type { RequestHandler } from 'express';
+// Request импортируется под псевдонимом: ниже объявлен `interface Request` в
+// module-аугментации, и oxlint (no-shadow) считает одноимённый импорт тенью.
+import type { Request as ExpressRequest, RequestHandler } from 'express';
 import type { components } from './contract.gen.js';
 
 /**
@@ -76,3 +78,39 @@ export function requireRole(role: Session['role']): RequestHandler {
     next();
   };
 }
+
+// ===== Дев-обход авторизации (AUTH_DISABLED=1) =====
+//
+// Для локальной проверки без пароля: роль берётся не из подписанной сессии
+// (Q9), а из обычной неподписанной cookie `dev_role`, которую клиент ставит по
+// URL страницы (`/admin` — владелец, остальное — гость). Это ослабление, а не
+// удаление авторизации: включается только конфигом, и в проде его быть не
+// должно. Обычный режим (requireSession) не меняется.
+
+/** Cookie роли для дев-обхода: ставится клиентом по URL, сервером не подписывается. */
+export const DEV_ROLE_COOKIE = 'dev_role';
+/** Имя записавшегося в дев-обходе: гостю его всё равно негде ввести (нет логина). */
+export const DEV_BOOKER_NAME = 'Гость';
+/**
+ * Секрет подписи для дев-обхода: в нём пароли и SESSION_SECRET не нужны, но
+ * cookie-парсер и `res.cookie({ signed: true })` требуют непустого секрета —
+ * иначе подпись бросает TypeError.
+ */
+export const DEV_SESSION_SECRET = 'dev-insecure-session-secret';
+
+/** Сессия дев-обхода: роль из cookie `dev_role`, имя — фиксированное. */
+export function devSession(req: ExpressRequest): Session {
+  const role: unknown = req.cookies?.[DEV_ROLE_COOKIE];
+  return role === 'admin'
+    ? { role: 'admin', bookerName: null }
+    : { role: 'guest', bookerName: DEV_BOOKER_NAME };
+}
+
+/**
+ * Гейт дев-обхода вместо requireSession: подставляет сессию всегда, поэтому
+ * 401 в этом режиме не бывает — экран входа не нужен.
+ */
+export const devSessionGate: RequestHandler = (req, _res, next) => {
+  req.session = devSession(req);
+  next();
+};
