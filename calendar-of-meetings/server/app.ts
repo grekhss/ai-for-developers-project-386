@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import type { MeetingTypesRepository } from './meeting-types-repository.js';
 import type { MeetingsRepository } from './repository.js';
 import { createRoutes } from './routes.js';
+import { DEV_SESSION_SECRET } from './session.js';
 
 export interface AppOptions {
   /** Пароль администратора (D1: только env, инжекция в фабрику). */
@@ -16,6 +17,12 @@ export interface AppOptions {
   secureCookie?: boolean;
   /** Каталог собранного фронта. По умолчанию dist/ рядом с пакетом. */
   staticDir?: string;
+  /**
+   * Дев-обход авторизации (AUTH_DISABLED=1): пароли и SESSION_SECRET не
+   * проверяются, роль берётся из URL (server/session.ts). Только для локальной
+   * проверки — в проде должно быть выключено.
+   */
+  authDisabled?: boolean;
 }
 
 /**
@@ -58,21 +65,36 @@ function assertValidAuth(options: AppOptions): void {
  * его делает только index.ts.
  */
 export function createApp(repos: AppRepositories, options: AppOptions): express.Express {
-  assertValidAuth(options);
+  // В дев-обходе пароли и SESSION_SECRET не нужны — обычную проверку конфига
+  // пропускаем, а подпись cookie обеспечиваем запасным секретом.
+  if (!options.authDisabled) assertValidAuth(options);
 
   const app = express();
   app.use(express.json());
   // Секрет подписи cookie — из инжектированного конфига; req.signedCookies
-  // появляется только с этим middleware (D3).
-  app.use(cookieParser(options.sessionSecret));
+  // появляется только с этим middleware (D3). В дев-обходе секрет может быть
+  // пустым, но cookie-парсер и signed-cookie требуют непустого.
+  app.use(cookieParser(options.sessionSecret || DEV_SESSION_SECRET));
   app.use(createRoutes(repos, { ...options, secureCookie: options.secureCookie ?? false }));
 
   // Статику отдаём из dist/ (в dev её раздаёт Vite; если dist/ ещё нет — запросы
   // просто уходят дальше). Путь — от файла app.js, а не от cwd: и в dev
   // (server/), и в проде (dist-server/) верхний каталог — корень пакета.
-  // SPA-fallback не нужен: клиентского роутера нет.
   const staticDir = options.staticDir ?? join(import.meta.dirname, '..', 'dist');
   app.use(express.static(staticDir));
+
+  // SPA-fallback для GET вне /api: страница /admin (роль по URL в дев-обходе)
+  // должна открываться и в проде — в dev её отдаёт Vite. /api не перехватываем,
+  // чтобы не превратить честный 404 API в index.html.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api/')) {
+      next();
+      return;
+    }
+    res.sendFile(join(staticDir, 'index.html'), (error?: Error) => {
+      if (error) next();
+    });
+  });
 
   return app;
 }

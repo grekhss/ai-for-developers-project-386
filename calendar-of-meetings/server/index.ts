@@ -23,6 +23,9 @@ const app = createApp(
     sessionSecret: process.env.SESSION_SECRET ?? '',
     // Secure в проде, без него в dev — http://localhost не даёт Secure-cookie (D3).
     secureCookie: process.env.NODE_ENV === 'production',
+    // Дев-обход авторизации: вход без пароля, роль — из URL (server/session.ts).
+    // Только для локальной проверки; в проде оставлять выключенным.
+    authDisabled: process.env.AUTH_DISABLED === '1',
   },
 );
 

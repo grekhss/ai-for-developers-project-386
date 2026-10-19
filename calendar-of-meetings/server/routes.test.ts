@@ -260,6 +260,74 @@ describe('routes /api/auth', () => {
   });
 });
 
+describe('routes: дев-обход авторизации (AUTH_DISABLED)', () => {
+  // createApp с authDisabled: пароли и SESSION_SECRET не заданы вовсе — их
+  // отсутствие в этом режиме допустимо (assertValidAuth пропускается). Роль
+  // приходит из URL: cookie dev_role=admin заводит в админские ручки, иначе гость.
+  async function createDevApp(): Promise<{ baseUrl: string }> {
+    const app = createApp(repos(), {
+      adminPassword: '',
+      guestPassword: '',
+      sessionSecret: '',
+      authDisabled: true,
+    });
+    const server = app.listen(0);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const { port } = server.address() as AddressInfo;
+    return { baseUrl: `http://127.0.0.1:${port}` };
+  }
+
+  it('без cookie и без пароля отдаёт гостевую сессию и разрешает запись (вход не нужен)', async () => {
+    const { baseUrl } = await createDevApp();
+
+    // Ни логина, ни cookie — тем не менее 200, а не 401: гейт подставляет сессию.
+    const me = await fetch(`${baseUrl}/api/me`);
+    expect(me.status).toBe(200);
+    expect(await me.json()).toEqual({ role: 'guest', bookerName: 'Гость' });
+
+    // Гость записывается без входа — booker берётся из подставленной сессии.
+    const response = await fetch(`${baseUrl}/api/meetings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: '2026-03-02', time: '09:00' }),
+    });
+    expect(response.status).toBe(201);
+  });
+
+  it('cookie dev_role=admin открывает админские ручки, гостевая — нет (403)', async () => {
+    const { baseUrl } = await createDevApp();
+    const admin = 'dev_role=admin';
+
+    expect((await fetch(`${baseUrl}/api/admin/meetings`, { headers: { Cookie: admin } })).status).toBe(200);
+
+    const created = await postType(baseUrl, admin, { name: 'Консультация', description: '' });
+    expect(created.status).toBe(201);
+    await postType(baseUrl, admin, {}, '/api/meeting-types/1/deactivate');
+    // Роль действительно admin, а не «гость с доступом»: виден и неактивный тип,
+    // гостю его не показывают (listAll против listActive).
+    const all = await fetch(`${baseUrl}/api/meeting-types`, { headers: { Cookie: admin } });
+    expect(await all.json()).toEqual([
+      { id: '1', name: 'Консультация', description: '', active: false },
+    ]);
+
+    expect(
+      (await fetch(`${baseUrl}/api/admin/meetings`, { headers: { Cookie: 'dev_role=guest' } })).status,
+    ).toBe(403);
+  });
+
+  it('POST /api/login в обходе не сверяет пароль и берёт роль из URL', async () => {
+    const { baseUrl } = await createDevApp();
+    const response = await fetch(`${baseUrl}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: 'dev_role=admin' },
+      body: JSON.stringify({ password: 'что угодно' }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ role: 'admin', bookerName: null });
+  });
+});
+
 describe('requireRole: ролевой гейт (изолированный probe; на роутах — S3/S4)', () => {
   // Probe-приложение: один роут за requireSession + requireRole('admin') — так
   // middleware проверяется отдельно от логики конкретных роутов; интеграционные

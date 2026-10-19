@@ -2,11 +2,11 @@ import express from 'express';
 import { today } from './date.js';
 import { DuplicateMeetingError } from './repository.js';
 import type { AppOptions, AppRepositories } from './app.js';
-import { requireRole, requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
+import { devSession, devSessionGate, requireRole, requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
 import type { CreateMeetingBody, CreateMeetingTypeBody, ListMeetingsQuery, LoginInput } from './types.js';
 import { isValidDraft, isValidLogin, isValidMeetingTypeDraft, isValidRange } from './validate.js';
 
-type AuthOptions = Pick<AppOptions, 'adminPassword' | 'guestPassword' | 'secureCookie'>;
+type AuthOptions = Pick<AppOptions, 'adminPassword' | 'guestPassword' | 'secureCookie' | 'authDisabled'>;
 
 /**
  * Тело и query обработчиков берутся из operations контракта, а не из выражения:
@@ -36,6 +36,16 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
   const cookie = { ...sessionCookieOptions(), secure: auth.secureCookie };
 
   router.post<NoParams, unknown, LoginInput>('/api/login', (req, res) => {
+    // Дев-обход (AUTH_DISABLED): пароль не проверяем — роль уже известна из
+    // URL (cookie dev_role, server/session.ts). Вход нужен лишь затем, чтобы
+    // экран входа после «Выйти» не оказался тупиком.
+    if (auth.authDisabled) {
+      const session = devSession(req);
+      res.cookie(SESSION_COOKIE, JSON.stringify(session), cookie);
+      res.json(session);
+      return;
+    }
+
     if (!isValidLogin(req.body)) {
       res.status(400).json({ error: 'password обязателен, bookerName — непустая строка' });
       return;
@@ -62,9 +72,10 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
     res.json(session);
   });
 
-  // Дальше все /api — только с сессией: requireSession ставится до роутов
-  // meetings и meeting-types. Админ-ручки ниже дополнительно берут requireRole.
-  router.use('/api', requireSession);
+  // Дальше все /api — только с сессией: гейт ставится до роутов meetings и
+  // meeting-types. В дев-обходе вместо requireSession — devSessionGate (роль из
+  // URL, 401 не бывает). Админ-ручки ниже всё равно берут requireRole.
+  router.use('/api', auth.authDisabled ? devSessionGate : requireSession);
 
   // Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать
   // её не может (C9). Сессия уже распарсена requireSession'ом.
