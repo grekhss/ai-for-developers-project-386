@@ -119,9 +119,13 @@ npm 10 locally.
   importing `defineConfig` from `vitest/config`,** so `vite build` doesn't need
   vitest installed at runtime. Delete that reference and `tsc` fails on the
   `test` key.
-- **`src/test/setup.ts` carries three load-bearing lines.** `window.matchMedia`
+- **`src/test/setup.ts` carries load-bearing stubs.** `window.matchMedia`
   is stubbed because jsdom doesn't implement it and Mantine's
   `use-provider-color-scheme` calls it (every render test throws otherwise);
+  `ResizeObserver` is stubbed for the same reason — Mantine's `ScrollArea`
+  (inside `Modal` and `Table.ScrollContainer`, both used by the admin panel, F6)
+  calls it in `use-resize-observer`, and without the stub rendering dies with
+  `ReferenceError: ResizeObserver is not defined`;
   `import 'dayjs/locale/ru'` is required because tests import `App.tsx` directly
   and bypass the import in `main.tsx` — without it the calendar silently renders
   "October 2026" / "MoTuWe..."; and `afterEach(cleanup)` is explicit because
@@ -167,8 +171,8 @@ npm 10 locally.
   The header shows the *current* month, so a test asserting "октября" passes in
   October and fails in November. `/^\d{1,2} [а-яё]+ \d{4}$/` proves Russian
   locale in any month.
-- **`App` takes optional `api`, `typesApi` and `sessionApi` props, and all three
-  are load-bearing in tests.** `lib/meetings/api.ts` exports a module-level
+- **`App` takes optional `api`, `typesApi`, `plannedApi` and `sessionApi` props,
+  and all four are load-bearing in tests.** `lib/meetings/api.ts` exports a module-level
   singleton, so without
   a per-test `createInMemoryMeetingsApi()` the meetings leak between test cases
   in the same file and a slot booked by an earlier test is `disabled` in a later
@@ -176,6 +180,10 @@ npm 10 locally.
   `lib/meeting-types/api.ts` is a singleton the same way: since F7 the guest
   view loads types right after login, and without a fake that request dies on
   jsdom's `Request` and paints the view into a load-error state.
+  `lib/planned-meetings/api.ts` is the same kind of singleton: the admin branch
+  loads planned meetings right after login (F6), so its tests need a
+  `plannedApi` fake — `createInMemoryPlannedMeetingsApi()` (seeded with
+  today-or-later dates: the fake mirrors the server and drops the past).
   `lib/session/api.ts` is a singleton the same way, and the whole app is gated
   by login (Q12a), so every render test also passes `sessionApi` — seeded
   guest (`createInMemorySessionApi({ role: 'guest', bookerName: 'Тест' })`) for
@@ -287,9 +295,10 @@ Overflow answers, and your own priors. Verified against
   сужает union по `error !== undefined` и пробрасывает исходное сетевое
   исключение как есть. Порт `MeetingsApi` и сигнатуры не менялись — UI их не
   замечает.
-- **В спеке есть ещё не реализованная ручка** (`/api/admin/meetings` — S4; три ручки
-  `/api/meeting-types` описаны и реализованы в S3): контракт намеренно
-  идёт впереди сервера, чтобы SDK (K3) собрал их до реализации. Их статус-коды и присутствие
+- **Ручки в спеке идут впереди сервера, но S4 и S3 их догнали.** Все описанные
+  операции теперь смонтированы: `GET /api/admin/meetings` (S4) и три
+  `/api/meeting-types` (S3). Контракт намеренно опережал сервер, чтобы SDK (K3)
+  собрал ручки до реализации. Их статус-коды и присутствие
   держит `server/contract.test.ts`, который сверяет каждую операцию с обязательным набором кодов.
 - **`server/contract.test.ts` сверяет роуты со спекой** (K4): интроспектирует
   `createRoutes(...).stack`, разворачивает Express-пути в форму OpenAPI (`:id` → `{id}`) и
@@ -331,6 +340,10 @@ Overflow answers, and your own priors. Verified against
   re-deriving weekend/past rules. Only `today()`/`now()` in `lib/date.ts` read
   system time, and call sites pass their results in — so tests inject a fixed
   `'YYYY-MM-DD HH:mm'` string instead of using `vi.setSystemTime`.
+  `server/date.ts` holds the server's own `today()` (same convention, hand-rolled
+  local date — `src/` isn't importable from `server/`): `listPlanned` takes the
+  boundary as a `from` parameter, and only the route calls `today()`, so the
+  repository test injects a fixed date the same way.
 - **`strict` is on** in `tsconfig.app.json` (enabled 2026-10-03, so don't assume
   the stock Vite template's laxer defaults). Nullable date/time state — the bulk
   of this app — is checked, so expect `string | null` to be narrowed explicitly
@@ -396,23 +409,27 @@ calendar-of-meetings/
 ├── server/                 # express + better-sqlite3; импорты — с .js-суффиксом
 │   ├── index.ts            # wiring: БД → createApp → listen; логики нет
 │   ├── app.ts              # createApp: express.json, роуты, статика dist/
-│   ├── routes.ts           # GET/POST /api/meetings (S5: тип + booker из сессии) + ручки типов встреч (S3)
-│   ├── repository.ts       # createRepository: list/create(draft, booker); UNIQUE → DuplicateMeetingError
+│   ├── routes.ts           # /api/meetings (S5) + /api/meeting-types (S3) + GET /api/admin/meetings (S4, за requireRole('admin'))
+│   ├── repository.ts       # createRepository: list/create(draft, booker)/listPlanned(from); UNIQUE → DuplicateMeetingError
 │   ├── meeting-types-repository.ts  # createMeetingTypesRepository: create/deactivate/listActive/listAll
+│   ├── session.ts          # подпись/разбор session-cookie + requireSession/requireRole (F2/F5)
+│   ├── date.ts             # today() — местная дата 'YYYY-MM-DD'; единственные часы в server/ (S4)
 │   ├── db.ts               # createDatabase + defaultDbPath (data/meetings.sqlite)
 │   ├── validate.ts         # форматная валидация по схемам контракта через ajv (не домен!)
 │   ├── contract.gen.ts     # сгенерированные TS-типы контракта (не править)
-│   ├── types.ts            # alias'ы Meeting/MeetingDraft/MeetingType + тела/параметры из operations
+│   ├── types.ts            # alias'ы Meeting/MeetingDraft/MeetingType/PlannedMeeting + тела/параметры из operations
 │   ├── contract.test.ts    # @vitest-environment node: артефакты контракта + сверка роутов со спекой
 │   ├── repository.test.ts  # @vitest-environment node
 │   ├── meeting-types-repository.test.ts  # @vitest-environment node
 │   └── routes.test.ts      # интеграция: createApp({ meetings, meetingTypes }, …) + listen(0) + fetch
 └── src/
     ├── main.tsx            # createRoot, provider stack, Mantine CSS imports
-    ├── App.tsx             # гейт по сессии + шапка; рендерит LoginScreen или GuestView
+    ├── App.tsx             # гейт по сессии + шапка; рендерит LoginScreen, GuestView или AdminView
     ├── App.test.tsx        # colocated vitest tests
     ├── GuestView.tsx       # гостевой вид: Stepper «Тип → Время → Готово» (F7); state букинга + оба хука
     ├── GuestView.test.tsx  # сценарии букинга: тип, слот, подтверждение, Alert'и
+    ├── AdminView.tsx       # админ-панель (F6, D4): вкладки, Switch-деактивация, модалка «Добавить тип», список встреч
+    ├── AdminView.test.tsx  # сценарии панели: вкладки, деактивация, создание, легаси-«—», пустое состояние
     ├── components/         # rendering only; props in, no domain rules
     │   ├── MeetingCalendar.tsx  # the only component that renders date selection
     │   ├── TimeSlots.tsx   # инлайн-сетка TimeGrid под календарём (D4); пустое состояние — текст
@@ -423,6 +440,8 @@ calendar-of-meetings/
     │   ├── useMeetings.test.ts
     │   ├── useMeetingTypes.ts  # load/create/deactivate meeting types; same injection seam
     │   ├── useMeetingTypes.test.ts
+    │   ├── usePlannedMeetings.ts   # load planned meetings (admin list); same injection seam
+    │   ├── usePlannedMeetings.test.ts
     │   ├── useSession.ts   # login/logout, роль + bookerName; тот же шов через параметр api
     │   └── useSession.test.ts
     ├── lib/                # framework-free domain code, unit-tested beside itself
@@ -448,6 +467,13 @@ calendar-of-meetings/
     │   │   ├── http.test.ts
     │   │   ├── inMemory.ts # createInMemoryMeetingTypesApi; list() копирует элементы — см. ниже
     │   │   └── inMemory.test.ts
+    │   ├── planned-meetings/  # зеркало meetings/ (F6/S4); список только читается
+    │   │   ├── types.ts    # alias'ы PlannedMeeting из contract.gen.ts
+    │   │   ├── api.ts      # PlannedMeetingsApi interface + the instance the app uses (HTTP)
+    │   │   ├── http.ts     # createHttpPlannedMeetingsApi — адаптер SDK на /api/admin/meetings
+    │   │   ├── http.test.ts
+    │   │   ├── inMemory.ts # createInMemoryPlannedMeetingsApi; фильтр «date >= today()» и сортировка — как на сервере
+    │   │   └── inMemory.test.ts
     │   └── session/        # зеркало meetings/ (F2); модули не зависят друг от друга
     │       ├── types.ts    # alias'ы Session/LoginInput из contract.gen.ts
     │       ├── api.ts      # SessionApi interface + the instance the app uses (HTTP)
@@ -455,19 +481,19 @@ calendar-of-meetings/
     │       ├── http.test.ts
     │       ├── inMemory.ts # createInMemorySessionApi(seed); пароли-фикстуры 'admin'/'guest'
     │       └── inMemory.test.ts
-    └── test/setup.ts       # matchMedia stub, dayjs locale, RTL cleanup (app-проект vitest)
+    └── test/setup.ts       # matchMedia + ResizeObserver stubs, dayjs locale, RTL cleanup (app-проект vitest)
 ```
 
 **Read `ARCHITECTURE.md` first.** It covers the layers, the `MeetingsApi`
 contract, the decisions that cost something (controlled slot in `GuestView`,
-inlined mount load, `api`/`sessionApi` props in `App`) and the known gaps. This
-file covers commands, conventions, and Mantine traps — the two documents
-deliberately don't repeat each other.
+inlined mount load, `api`/`typesApi`/`plannedApi`/`sessionApi` props in `App`) and
+the known gaps. This file covers commands, conventions, and Mantine traps — the
+two documents deliberately don't repeat each other.
 
 **Three layers:** `lib/` holds pure functions and types with no React and no
 Mantine imports; `components/` renders; `hooks/` is the only place that owns
 React state and the only bridge between `components/` and the `api.ts` modules
-(`lib/meetings/`, `lib/meeting-types/`, `lib/session/`).
+(`lib/meetings/`, `lib/meeting-types/`, `lib/planned-meetings/`, `lib/session/`).
 Domain rules and date formatting live in `lib/` and are duplicated nowhere — if
 a second component needs "is this a bookable day?" or "how do we spell a date in
 Russian?", it imports from `lib/`, it does not re-derive it. Keep
@@ -494,14 +520,20 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 дня — так занятый слот не выбирается и после перечитывания списка. Через
 `createMeeting` гостевой флоу всегда прокидывает `meeting_type_id` (контракт
 намеренно допускает запись без типа для легаси, но F7-сценарий её не создаёт).
+`AdminView` (F6) держит только UI-состояние: активную вкладку, `opened` модалки
+и поля `name`/`description` формы — оба списка приходят из `useMeetingTypes` и
+`usePlannedMeetings`. Ошибка у двух хуков показывается одним `Alert`; когда
+модалка открыта, он переезжает внутрь неё (`error && !modalOpen`), чтобы не
+двоилось.
 
 **Data access goes through the `api.ts` interfaces** (`lib/meetings/api.ts`,
-`lib/meeting-types/api.ts`, `lib/session/api.ts`), never straight to a concrete
+`lib/meeting-types/api.ts`, `lib/planned-meetings/api.ts`, `lib/session/api.ts`),
+never straight to a concrete
 implementation. Each `api.ts` holds the interface *and* the instance the app
 uses, so switching to HTTP is a one-line change there; components and hooks
 only see the interface.
 Hooks take the API as a parameter with that instance as the default, which is
-how tests inject a fake without `vi.mock`. The three module folders mirror each
+how tests inject a fake without `vi.mock`. The four module folders mirror each
 other and must not import from each other — a shared helper (e.g. the SDK
 `failure()` mapper) is deliberately duplicated per folder to keep them
 independent.

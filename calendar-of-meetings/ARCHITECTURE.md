@@ -1,13 +1,13 @@
 # Архитектура
 
-Описание состояния проекта на конец второй функциональности: календарь встреч
-с персистентным бэкендом. Документ отвечает на вопрос «как устроено и почему»,
-а не «как запустить».
+Описание состояния проекта на конец функциональности ролей (админ/гость):
+календарь встреч с персистентным бэкендом. Документ отвечает на вопрос «как
+устроено и почему», а не «как запустить».
 
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
 
-Проверено на: 41 файл в `src/` (плюс сгенерированные `src/lib/api-gen/`),
-12 файлов в `server/`, 188 тестов в 19 файлах, `npm run check` и `npm run build`
+Проверено на: 51 файл в `src/` (плюс сгенерированные `src/lib/api-gen/`),
+15 файлов в `server/`, 215 тестов в 23 файлах, `npm run check` и `npm run build`
 зелёные. Стек: React 19, Mantine 9.6.3, dayjs, TypeScript 6 со `strict`,
 Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 клиентский SDK — `@hey-api/openapi-ts` 0.95.
@@ -19,9 +19,12 @@ Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 гость проходит степпер «Тип → Время → Готово» (F7, D4): выбирает тип встречи,
 день в пределах гостевого окна и свободный слот в инлайн-сетке, подтверждает
 запись — она уходит по HTTP на express-сервер и хранится в SQLite — поэтому
-переживает перезапуск, а дубль слота отклоняется сервером. Компоненты и хуки
-видят только абстракции `MeetingsApi`, `MeetingTypesApi` и `SessionApi` (§4),
-смена реализации их не затрагивает.
+переживает перезапуск, а дубль слота отклоняется сервером. Админ попадает в
+панель с двумя вкладками (F6, D4): «Типы встреч» — таблица с деактивацией
+`Switch` и модалкой «Добавить тип», «Запланированные встречи» — таблица
+дата/время/тип/Booker по join-DTO с сервера (S4). Компоненты и хуки видят только
+абстракции `MeetingsApi`, `MeetingTypesApi`, `PlannedMeetingsApi` и `SessionApi`
+(§4), смена реализации их не затрагивает.
 
 ## 2. Поток данных
 
@@ -29,7 +32,7 @@ Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App: гейт (Q12a)
               │  loading → «Восстановление сессии…»; session = null → LoginScreen;
               │  вошёл → шапка (бейдж роли, «Выйти») и вид по роли сервера:
-              │  admin → Админ-панель (заглушка, F6), guest → GuestView
+              │  admin → AdminView (F6), guest → GuestView
                                                                   │
                        GuestView (F7, D4): Stepper «Тип → Время → Готово»
                        (шаг, typeId, selectedDate, time, lastBooked)
@@ -53,13 +56,21 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App: �
  MeetingTypesApi ──► createHttpMeetingTypesApi ──► fetch /api/meeting-types
    (F3/F7: гостю — только активные типы; создание/деактивация — админ, F6)
 
+ AdminView (F6, D4): вкладки «Типы встреч» (useMeetingTypes) и
+   «Запланированные встречи» (usePlannedMeetings: дата/время/тип/Booker)
+        │
+        ▼
+ PlannedMeetingsApi ──► createHttpPlannedMeetingsApi ──► fetch /api/admin/meetings
+   (S4: join-DTO meetings × meeting_types, только admin — иначе 403; граница
+    «сегодня и позже» и сортировка date→time — на сервере, Q6)
+
  useSession(api) ──► SessionApi ──► createHttpSessionApi ──► fetch /api/login, /api/logout, /api/me
         (вход/выход, роль + bookerName, восстановление из GET /api/me; хук — F2,
          экран входа, шапка и гейт по роли — F5)
 ```
 
 Запросы формируют только адаптеры `http.ts` (`src/lib/meetings/`,
-`src/lib/meeting-types/`, `src/lib/session/`), и делают они это через
+`src/lib/meeting-types/`, `src/lib/planned-meetings/`, `src/lib/session/`), и делают они это через
 сгенерированный клиентский SDK `src/lib/api-gen` (K3, D5). SDK собран из того же
 `contract/openapi.yaml` той же командой
 `npm run contract`, что и остальные артефакты контракта, поэтому путь, заголовки
@@ -80,13 +91,13 @@ Mantine, ни от его внутреннего устройства.
 
 | Слой | Файлы | Правило |
 | --- | --- | --- |
-| `lib/` | `date.ts`, `window.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts`, `meeting-types/{types,api,inMemory,http}.ts`, `session/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. Модули `meetings/`, `meeting-types/` и `session/` зеркалят друг друга и не зависят друг от друга. |
-| `hooks/` | `useMeetings.ts`, `useMeetingTypes.ts`, `useSession.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственные мосты к `MeetingsApi`, `MeetingTypesApi` и `SessionApi`. |
+| `lib/` | `date.ts`, `window.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts`, `meeting-types/{types,api,inMemory,http}.ts`, `planned-meetings/{types,api,inMemory,http}.ts`, `session/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. Модули `meetings/`, `meeting-types/`, `planned-meetings/` и `session/` зеркалят друг друга и не зависят друг от друга. |
+| `hooks/` | `useMeetings.ts`, `useMeetingTypes.ts`, `usePlannedMeetings.ts`, `useSession.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственные мосты к `MeetingsApi`, `MeetingTypesApi`, `PlannedMeetingsApi` и `SessionApi`. |
 | `components/` | `MeetingCalendar.tsx`, `TimeSlots.tsx`, `LoginScreen.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
-| `App.tsx`, `GuestView.tsx` | — | Только UI-состояние страниц (сессия и форма входа; состояние букинга) и раскладка. Не импортируют `@mantine/dates`. |
+| `App.tsx`, `GuestView.tsx`, `AdminView.tsx` | — | Только UI-состояние страниц (сессия и форма входа; состояние букинга; вкладки и модалка админа) и раскладка. Не импортируют `@mantine/dates`. |
 
-Зависимости строго односторонние: `App/GuestView → components → lib`,
-`App/GuestView → hooks → lib`.
+Зависимости строго односторонние: `App/GuestView/AdminView → components → lib`,
+`App/GuestView/AdminView → hooks → lib`.
 Обратных импортов нет.
 
 Отдельный процесс — `server/`: express-приложение, собираемое фабрикой
@@ -120,7 +131,8 @@ Mantine, ни от его внутреннего устройства.
 единственный источник истины. Из него генерируются `contract/openapi.yaml`, две
 TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`) и JSON Schema
 (`contract/schema/calendar-of-meetings.json`, K4/ADR-0005); `src/lib/meetings/types.ts`,
-`src/lib/meeting-types/types.ts`, `src/lib/session/types.ts`, `server/types.ts`,
+`src/lib/meeting-types/types.ts`, `src/lib/planned-meetings/types.ts`,
+`src/lib/session/types.ts`, `server/types.ts`,
 `Session` и `LoginInput` — alias'ы на генерат, ручных дублей больше нет.
 Копии TS две, а не одна общая, потому что `rootDir: server` закрывает серверу импорт из
 `src/` (§3): копия лежит внутри `server/`, инвариант сохранён.
@@ -144,17 +156,17 @@ TS-копии (`src/lib/contract.gen.ts`, `server/contract.gen.ts`) и JSON Sche
 (200/400/401), `POST /logout` (204/401), `GET /me` (200/401), `GET /meetings`
 (200/400/401), `POST /meetings` (201/400/401/409). Типы встреч (S3): `GET /meeting-types`
 (200/401; админу — все, гостю — только активные), `POST /meeting-types` (201/400/401/403),
-`POST /meeting-types/{id}/deactivate` (200/400/401/403). Админские ручки дополнительно
-требуют роль admin — иначе 403.
+`POST /meeting-types/{id}/deactivate` (200/400/401/403). Админский список (S4):
+`GET /admin/meetings` (200/401/403) — join-DTO встреч с типами. Админские ручки
+дополнительно требуют роль admin — иначе 403.
 
-В спеке описаны и **ещё не реализованные ручки** (K2/D5): `GET /api/admin/meetings`
-(S4). Контракт намеренно идёт впереди сервера, чтобы
-клиентский SDK (K3) собрал их до реализации. Каждую операцию со стороны спеки
+Каждую операцию со стороны спеки
 держит `server/contract.test.ts` (обязательный набор статус-кодов), а соответствие
 `.tsp` — `contract:check`. Тот же тест сверяет и **роуты со спекой**: интроспектирует
 `createRoutes(...).stack`, разворачивает Express-пути в форму OpenAPI (`:id` → `{id}`)
 и проверяет, что каждая смонтированная пара «путь + метод» описана в спеке. Направление —
-**роуты ⊆ спека**: контракт идёт впереди, поэтому лишняя ручка в спеке допустима (S4),
+**роуты ⊆ спека**: контракт опережает сервер (так SDK собрал ручки S4 и S3 заранее),
+поэтому лишняя ручка в спеке допустима,
 но смонтированная ручка вне спеки — нет. Там же проверяется порядок слоёв: сеанс-гейт
 должен покрывать всё после себя, а `POST /api/login` оставаться единственным открытым роутом.
 
@@ -179,6 +191,15 @@ MeetingTypesApi {                                // src/lib/meeting-types/ (F3),
   create(draft: MeetingTypeDraft): Promise<MeetingType>   // новый тип всегда активен
   deactivate(id: string): Promise<MeetingType>            // неизвестный id — исключение
                                                  // (сервер отвечает 400, не 404)
+}
+
+PlannedMeeting { date: 'YYYY-MM-DD'; time: 'HH:mm'; type: string | null; booker: string | null }
+// S4/Q6: join-DTO, а не Meeting. type — null у легаси-записи без типа, booker —
+// null у старой записи без автора (C5); UI рисует оба как «—».
+
+PlannedMeetingsApi {                             // src/lib/planned-meetings/ (S4/F6), зеркало MeetingsApi
+  list(): Promise<PlannedMeeting[]>              // без параметров: границу «сегодня и позже»
+                                                 // и сортировку date→time держит сервер (Q6)
 }
 
 Session     { role: 'admin' | 'guest'; bookerName: string | null }  // у админа bookerName null
@@ -260,17 +281,19 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 запись (при неудаче — `null`), и сбрасывается сменой любого выбора (типа, даты,
 слота) прямо в обработчиках, без эффектов.
 
-**Пропы `api`, `typesApi` и `sessionApi` в `App` — не удобство, а необходимость**
-(`src/App.tsx`). `lib/meetings/api.ts` экспортирует модульный синглтон; без
-подмены записи утекают между тестами одного файла, слот оказывается `disabled`,
-`userEvent` кликает по неактивной кнопке, `time` не выставляется, и тест падает
-по таймауту `findBy`. Воспроизведено: с синглтоном падает тест «занятый слот в
-следующий раз не выбирается». `lib/meeting-types/api.ts` — синглтон того же
-вида: с F7 гостевой вид грузит типы сразу после входа, и без фейка этот запрос
-в тестах умирает на jsdom-`Request`, а вид красится в ошибку загрузки. Тот же
-аргумент за `sessionApi`: `lib/session/api.ts` — синглтон того же вида, а
-приложение целиком закрыто входом (Q12a), поэтому тест логина обязан подставить
-свой фейк сессии (T6).
+**Пропы `api`, `typesApi`, `plannedApi` и `sessionApi` в `App` — не удобство, а
+необходимость** (`src/App.tsx`). `lib/meetings/api.ts` экспортирует модульный
+синглтон; без подмены записи утекают между тестами одного файла, слот оказывается
+`disabled`, `userEvent` кликает по неактивной кнопке, `time` не выставляется, и
+тест падает по таймауту `findBy`. Воспроизведено: с синглтоном падает тест
+«занятый слот в следующий раз не выбирается». `lib/meeting-types/api.ts` —
+синглтон того же вида: с F7 гостевой вид грузит типы сразу после входа, и без
+фейка этот запрос в тестах умирает на jsdom-`Request`, а вид красится в ошибку
+загрузки. `lib/planned-meetings/api.ts` — такой же синглтон, и админская ветка
+грузит список запланированных встреч сразу после входа (F6), поэтому её тестам
+нужен `plannedApi`. Тот же аргумент за `sessionApi`: `lib/session/api.ts` —
+синглтон того же вида, а приложение целиком закрыто входом (Q12a), поэтому тест
+логина обязан подставить свой фейк сессии (T6).
 
 **Фабрика, а не синглтон, в `inMemory`** (`src/lib/meetings/inMemory.ts:8`) — по
 той же причине. Отдельный тест «не делит хранилище между вызовами фабрики»
@@ -294,7 +317,7 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 | Доменная валидация на сервере (2-й клиент, публичный API) | Сейчас сервер проверяет формат и целостность, но не домен (§4). Правила (`isBookable`, сетка слотов) вынести в общий модуль и звать из `server/validate.ts`; UI продолжит пользоваться `lib/`. |
 | Праздники, дни без свободных слотов | `lib/date.ts` `isBookable` (день) и `lib/window.ts` `isBookableSlot` (время слота). |
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
-| Горизонт списка записей | `lib/window.ts` `WINDOW_DAYS` (гостевое окно Q5): верхняя граница списка — `windowEnd(now())` в `useMeetings`. Админский список окном не ограничен (Q6) — придёт с S4/F6. |
+| Горизонт списка записей | `lib/window.ts` `WINDOW_DAYS` (гостевое окно Q5): верхняя граница списка — `windowEnd(now())` в `useMeetings`. Админский список окном не ограничен (Q6): `listPlanned` в `server/repository.ts` фильтрует только «`date >= from`», верхней границы нет (S4). |
 | Ручное обновление списка | `refresh` уже возвращается хуком (`useMeetings.ts:55`), но UI его пока не вызывает — кнопка добавится без изменения хука. |
 | Список всех записей (не только сетка слотов) | `GuestView.tsx` получает весь массив `meetings`; сортировка и фильтрация — его дело, а не компонентов. |
 
@@ -316,8 +339,8 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
    Гостевое окно Q5 (сегодня…+13) и граница списка (`windowEnd(now())` в
    `useMeetings`) пересчитываются при загрузке. `MeetingCalendar` может
    показать любой месяц, но за пределами окна дни выключены — туда не загружаются
-   и занятые слоты. Админский список окном не ограничен (Q6) — его диапазон
-   придёт вместе с S4/F6.
+   и занятые слоты. Админский список окном не ограничен (Q6): `listPlanned`
+   берёт всё от `today()` и выше (S4), поэтому записи за пределами 14 дней в нём видны.
 3. **Сервер валидирует формат и целостность, но не домен (S5).** Формат
    проверяет `ajv` по схеме из `contract/schema/`, а роуты — целостность:
    названный `meeting_type_id` обязан существовать и быть активным, `booker`
@@ -331,13 +354,15 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-188 тестов: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 8, `http` 7),
-`meeting-types` (`inMemory` 7, `http` 8), `session` (`inMemory` 8, `http` 10),
-`useMeetings` 7, `useMeetingTypes` 6, `useSession` 7,
+215 тестов: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 8, `http` 7),
+`meeting-types` (`inMemory` 7, `http` 8), `planned-meetings` (`inMemory` 4, `http` 5),
+`session` (`inMemory` 8, `http` 10),
+`useMeetings` 7, `useMeetingTypes` 6, `usePlannedMeetings` 3, `useSession` 7,
 `TimeSlots` 4, `GuestView` 18 (сценарии букинга F7: тип, слот, подтверждение,
-Alert'и), `App` 8 (сквозные сценарии гейта по сессии: вход, роль, выход)
-— и серверные: `repository` 11,
-`meeting-types-repository` 6, `routes` 36, `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
+Alert'и), `AdminView` 9 (вкладки, деактивация, создание, легаси-«—», пустое
+состояние), `App` 8 (сквозные сценарии гейта по сессии: вход, роль, выход)
+— и серверные: `repository` 15 (включая join-DTO `listPlanned`),
+`meeting-types-repository` 6, `routes` 38, `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
 роутов со спекой и порядка сеанс-гейта). Фронтовые тесты
 колоцированы в `src/`, поэтому `tsc -b` проверяет их
 типы бесплатно; серверные проверяет `tsc -p tsconfig.server.json --noEmit`.
@@ -396,7 +421,15 @@ null)` → `if (true)` — тест на ошибку создания, `disable
 `TypeError` из `new Request`. Теперь он сверяет русский текст ошибки. По той же
 схеме в K3: удаление `credentials: 'include'` валит тест cookie-сессии, замена
 русского текста — тест на 400/409, удаление прокидывания сетевого исключения —
-тест на «ошибка сети».
+тест на «ошибка сети». В S4/F6 харнесс из 20 мутаций убил 19: `LEFT JOIN` →
+`INNER JOIN` валит тест на легаси-строки, `requireRole('admin')` → `guest` —
+матрицу 403, `today()` → фиксированное прошлое — тест «сегодня в списке»,
+снятие `disabled={!type.active}` и `checked={type.active}` — тесты деактивации,
+`meeting.type ?? '—'` — тест легаси-прочерков, отключение `refresh` в
+`usePlannedMeetings` — тест перечитывания. Один выживший эквивалентен: удаление
+`ORDER BY m.date, m.time` поведения не меняет — `UNIQUE(date, time)` создаёт
+автоиндекс, и `WHERE m.date >= ?` уже отдаёт строки в порядке (date, time);
+строка оставлена страховкой от смены плана.
 
 ## 9. Чек-лист инвариантов для агента
 
@@ -407,7 +440,8 @@ null)` → `if (true)` — тест на ошибку создания, `disable
 - [ ] Не добавляется `useEffect` с `setState` и не вызывается из эффекта функция,
       которая его трогает.
 - [ ] Новый render-тест обёрнут в `MantineProvider`, интеграционный — получает
-      свои `api` / `sessionApi` (своё хранилище вместо модульного синглтона).
+      свои `api` / `typesApi` / `plannedApi` / `sessionApi` (своё хранилище
+      вместо модульного синглтона).
 - [ ] `server/` не импортирует из `src/` (`rootDir: server`); импорты внутри —
       с `.js`-суффиксом (nodenext).
 - [ ] `.gen.ts`, `contract/openapi.yaml`, `contract/schema/` и `src/lib/api-gen/` не

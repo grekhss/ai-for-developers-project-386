@@ -1,18 +1,22 @@
 import { useState } from 'react';
-import { Alert, Badge, Button, Card, Container, Group, Text, Title } from '@mantine/core';
+import { Alert, Badge, Button, Container, Group, Text, Title } from '@mantine/core';
 import LoginScreen from './components/LoginScreen.tsx';
+import AdminView from './AdminView.tsx';
 import GuestView from './GuestView.tsx';
 import { useSession } from './hooks/useSession.ts';
 import { sessionApi as defaultSessionApi, type SessionApi } from './lib/session/api.ts';
 import { meetingsApi, type MeetingsApi } from './lib/meetings/api.ts';
 import { meetingTypesApi, type MeetingTypesApi } from './lib/meeting-types/api.ts';
+import { plannedMeetingsApi, type PlannedMeetingsApi } from './lib/planned-meetings/api.ts';
 import type { LoginInput } from './lib/session/types.ts';
 
 interface AppProps {
   /** Подменяется в тестах, чтобы не делить записи между сценариями. */
   api?: MeetingsApi;
-  /** Типы встреч для гостевого вида — тот же шов (F7). */
+  /** Типы встреч — нужны обоим видам: гостю список, админу таблица (F6/F7). */
   typesApi?: MeetingTypesApi;
+  /** Админский список запланированных встреч (F6/S4) — тот же шов. */
+  plannedApi?: PlannedMeetingsApi;
   /** И сессия тоже через проп: тесты входа подставляют свой фейк (T6). */
   sessionApi?: SessionApi;
 }
@@ -25,6 +29,7 @@ interface AppProps {
 export default function App({
   api = meetingsApi,
   typesApi = meetingTypesApi,
+  plannedApi = plannedMeetingsApi,
   sessionApi = defaultSessionApi,
 }: AppProps) {
   const { session, loading, error, login, logout } = useSession(sessionApi);
@@ -87,13 +92,9 @@ export default function App({
       )}
 
       {isAdmin ? (
-        // Админ не записывается на встречи (Q12c); содержимое панели — F6.
-        <Card shadow="sm" padding="lg" radius="md" withBorder>
-          <Text fw={500}>Админ-панель</Text>
-          <Text size="sm" c="dimmed">
-            Разделы «Типы встреч» и «Запланированные встречи» готовятся.
-          </Text>
-        </Card>
+        // Админ не записывается на встречи (Q12c) — панель только наблюдает и
+        // ведёт типы (F6, D4). `api` ей не нужен: гостевые ручки она не зовёт.
+        <AdminView typesApi={typesApi} plannedApi={plannedApi} />
       ) : (
         <GuestView api={api} typesApi={typesApi} />
       )}

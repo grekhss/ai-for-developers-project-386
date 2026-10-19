@@ -1,4 +1,5 @@
 import express from 'express';
+import { today } from './date.js';
 import { DuplicateMeetingError } from './repository.js';
 import type { AppOptions, AppRepositories } from './app.js';
 import { requireRole, requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
@@ -185,6 +186,13 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
       res.json(deactivated);
     },
   );
+
+  // ===== Админский список запланированных встреч (S4): только admin (403
+  // остальным). Границу «сегодня и позже» даёт today(), не окно Q5 (C5/Q6);
+  // сортировка и LEFT JOIN — в репозитории.
+  router.get('/api/admin/meetings', requireRole('admin'), (_req, res) => {
+    res.json(repos.meetings.listPlanned(today()));
+  });
 
   return router;
 }

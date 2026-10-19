@@ -26,10 +26,9 @@ const serverGen = read('./contract.gen.ts');
 const toOpenApiPath = (path: string): string => path.replace(/:([^/]+)/g, '{$1}');
 
 /**
- * Все ручки API — их набор живёт в contract/main.tsp. Последняя
- * (listPlannedMeetings, S4) описана в контракте заранее и сервером пока не
- * реализована: контракт намеренно идёт впереди, чтобы SDK (K3) собрал её до
- * серверной части.
+ * Все ручки API — их набор живёт в contract/main.tsp. listPlannedMeetings (S4)
+ * описана там заранее и смонтирована в S4: контракт шёл впереди сервера, чтобы
+ * SDK (K3) собрал её до реализации.
  */
 const OPERATIONS = [
   'login',
