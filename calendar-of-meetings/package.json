@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"tsx --env-file-if-exists=.env watch server/index.ts\" \"vite\"",
-    "dev:server": "tsx --env-file-if-exists=.env watch server/index.ts",
+    "dev": "concurrently -k \"tsx watch --env-file-if-exists=.env server/index.ts\" \"vite\"",
+    "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
     "build": "npm run contract && tsc -b && vite build && tsc -p tsconfig.server.build.json",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
