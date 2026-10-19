@@ -237,7 +237,7 @@ Overflow answers, and your own priors. Verified against
 - **Источник истины — `contract/main.tsp`** (TypeSpec; K1/ADR-0004). `contract/openapi.yaml`,
   `src/lib/contract.gen.ts` и `server/contract.gen.ts` — **сгенерированные артефакты**:
   руками их не правят, правка идёт в `.tsp` и приезжает через `npm run contract`.
-- **Контракт описывает формат и схему, не домен.** Прошедшие даты, выходные и сетка
+- **Контракт описывает формат и схему, не домен (ADR-0007).** Прошедшие даты, выходные и сетка
   слотов остаются фронтовой политикой; `server/validate.ts` валидирует формат по сгенерированным
   схемам через `ajv` (булев предикат, K4) — руками остаётся то, что JSON Schema не выразит,
   и живёт это в `routes.ts`: обёртка `req.body === undefined` (в Express 5 парсер может не
