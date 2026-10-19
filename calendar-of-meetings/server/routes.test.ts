@@ -750,12 +750,16 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
     await postType(baseUrl, adminCookie, { name: 'Консультация', description: '30 минут' });
 
     // Завтрашняя типизированная запись — через реальный POST: booker придёт из
-    // сессии, тип сохранится.
-    await postMeeting(baseUrl, guest, {
+    // сессии, тип сохранится. Это и есть сквозной позитив T9 (login → POST с
+    // активным типом → 201 → строка в админском join-DTO): статус и тело ответа
+    // проверяются здесь, чтобы весь путь S2→S5→S4 был одним тестом.
+    const created = await postMeeting(baseUrl, guest, {
       date: localDate(1),
       time: '09:00',
       meeting_type_id: '1',
     });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({ id: '1', date: localDate(1), time: '09:00' });
     // Легаси-строки — только прямой вставкой: без типа и автора (C5) и в прошлом.
     db.prepare('INSERT INTO meetings (date, time) VALUES (?, ?)').run(localDate(0), '10:00');
     db.prepare('INSERT INTO meetings (date, time) VALUES (?, ?)').run(localDate(-1), '11:00');
@@ -766,5 +770,53 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
       { date: localDate(0), time: '10:00', type: null, booker: null },
       { date: localDate(1), time: '09:00', type: 'Консультация', booker: 'Иван' },
     ]);
+  });
+});
+
+describe('routes: жизненный цикл типа (T5/Q7)', () => {
+  function listTypes(baseUrl: string, cookie: string) {
+    return fetch(`${baseUrl}/api/meeting-types`, { headers: { Cookie: cookie } });
+  }
+  function listPlanned(baseUrl: string, cookie: string) {
+    return fetch(`${baseUrl}/api/admin/meetings`, { headers: { Cookie: cookie } });
+  }
+
+  it('деактивация типа с уже записанной встречей разрешена: история помнит тип, новая запись — 400', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    const guest = await loginAsGuest(baseUrl, 'Иван');
+
+    const booked = await postMeeting(baseUrl, guest, {
+      date: localDate(1),
+      time: '09:00',
+      meeting_type_id: '1',
+    });
+    expect(booked.status).toBe(201);
+
+    // Наличие встреч деактивацию НЕ блокирует: удаления в v1 нет, деактивация —
+    // единственный конец жизненного цикла (Q7). Тип остаётся в админском списке
+    // (listAll), просто с active: false.
+    const deactivated = await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+    expect(deactivated.status).toBe(200);
+    expect(((await deactivated.json()) as { active: boolean }).active).toBe(false);
+    expect(await (await listTypes(baseUrl, adminCookie)).json()).toEqual([
+      { id: '1', name: 'Консультация', description: '', active: false },
+    ]);
+
+    // История не обезличивается: у записанной встречи тип остаётся названием…
+    expect(await (await listPlanned(baseUrl, adminCookie)).json()).toEqual([
+      { date: localDate(1), time: '09:00', type: 'Консультация', booker: 'Иван' },
+    ]);
+
+    // …а новая запись на деактивированный тип не проходит (Q7), и гость тип
+    // больше не видит (listActive).
+    const rebook = await postMeeting(baseUrl, guest, {
+      date: localDate(2),
+      time: '09:00',
+      meeting_type_id: '1',
+    });
+    expect(rebook.status).toBe(400);
+    expect(await rebook.json()).toEqual({ error: 'тип встречи не найден или неактивен' });
+    expect(await (await listTypes(baseUrl, await loginAsGuest(baseUrl))).json()).toEqual([]);
   });
 });

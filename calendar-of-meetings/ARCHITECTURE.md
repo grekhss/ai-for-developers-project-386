@@ -7,7 +7,7 @@
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
 
 Проверено на: 51 файл в `src/` (плюс сгенерированные `src/lib/api-gen/`),
-15 файлов в `server/`, 217 тестов в 23 файлах, `npm run check` и `npm run build`
+15 файлов в `server/`, 219 тестов в 23 файлах, `npm run check` и `npm run build`
 зелёные. Стек: React 19, Mantine 9.6.3, dayjs, TypeScript 6 со `strict`,
 Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 клиентский SDK — `@hey-api/openapi-ts` 0.95.
@@ -354,7 +354,7 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 
 ## 8. Тестовая стратегия
 
-217 тестов: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 8, `http` 7),
+219 тестов: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 8, `http` 7),
 `meeting-types` (`inMemory` 7, `http` 8), `planned-meetings` (`inMemory` 4, `http` 5),
 `session` (`inMemory` 8, `http` 10),
 `useMeetings` 7, `useMeetingTypes` 6, `usePlannedMeetings` 3, `useSession` 7,
@@ -362,9 +362,10 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 Alert'и), `AdminView` 9 (вкладки, деактивация, создание, легаси-«—», пустое
 состояние), `App` 8 (сквозные сценарии гейта по сессии: вход, роль, выход)
 — и серверные: `repository` 15 (включая join-DTO `listPlanned`),
-`meeting-types-repository` 6, `routes` 40 (матрица доступа anon/guest/admin,
-logout T8/Q13, join-DTO `listPlanned`), `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
-роутов со спекой и порядка сеанс-гейта). Фронтовые тесты
+`meeting-types-repository` 6, `routes` 41 (матрица доступа anon/guest/admin,
+logout T8/Q13, жизненный цикл типа T5/T9, join-DTO `listPlanned`),
+`contract` 8 (артефакты и статус-коды контракта, сверка смонтированных
+роутов со спекой и порядка сеанс-гейта, отсутствие DELETE). Фронтовые тесты
 колоцированы в `src/`, поэтому `tsc -b` проверяет их
 типы бесплатно; серверные проверяет `tsc -p tsconfig.server.json --noEmit`.
 
