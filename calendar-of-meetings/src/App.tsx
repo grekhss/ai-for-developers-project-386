@@ -5,11 +5,14 @@ import GuestView from './GuestView.tsx';
 import { useSession } from './hooks/useSession.ts';
 import { sessionApi as defaultSessionApi, type SessionApi } from './lib/session/api.ts';
 import { meetingsApi, type MeetingsApi } from './lib/meetings/api.ts';
+import { meetingTypesApi, type MeetingTypesApi } from './lib/meeting-types/api.ts';
 import type { LoginInput } from './lib/session/types.ts';
 
 interface AppProps {
   /** Подменяется в тестах, чтобы не делить записи между сценариями. */
   api?: MeetingsApi;
+  /** Типы встреч для гостевого вида — тот же шов (F7). */
+  typesApi?: MeetingTypesApi;
   /** И сессия тоже через проп: тесты входа подставляют свой фейк (T6). */
   sessionApi?: SessionApi;
 }
@@ -19,7 +22,11 @@ interface AppProps {
  * восстановление, без сессии — экран входа, дальше — вид по роли, которую
  * решил сервер (Q9). Шапка с бейджем роли и «Выйти» — по D4 (вариант A).
  */
-export default function App({ api = meetingsApi, sessionApi = defaultSessionApi }: AppProps) {
+export default function App({
+  api = meetingsApi,
+  typesApi = meetingTypesApi,
+  sessionApi = defaultSessionApi,
+}: AppProps) {
   const { session, loading, error, login, logout } = useSession(sessionApi);
   // Форма входа — UI-состояние страницы (как selectedDate раньше в App):
   // значения живут, пока форма показана, и очищаются после успешного входа,
@@ -88,7 +95,7 @@ export default function App({ api = meetingsApi, sessionApi = defaultSessionApi 
           </Text>
         </Card>
       ) : (
-        <GuestView api={api} />
+        <GuestView api={api} typesApi={typesApi} />
       )}
     </Container>
   );

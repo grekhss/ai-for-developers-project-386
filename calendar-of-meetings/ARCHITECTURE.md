@@ -6,8 +6,8 @@
 
 - Команды, соглашения и ловушки Mantine — в [`AGENTS.md`](./AGENTS.md).
 
-Проверено на: 40 файлов в `src/` (плюс сгенерированные `src/lib/api-gen/`),
-12 файлов в `server/`, 182 теста в 18 файлах, `npm run check` и `npm run build`
+Проверено на: 41 файл в `src/` (плюс сгенерированные `src/lib/api-gen/`),
+12 файлов в `server/`, 188 тестов в 19 файлах, `npm run check` и `npm run build`
 зелёные. Стек: React 19, Mantine 9.6.3, dayjs, TypeScript 6 со `strict`,
 Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 клиентский SDK — `@hey-api/openapi-ts` 0.95.
@@ -16,11 +16,12 @@ Vite 8, vitest 4, oxlint, Express 5, better-sqlite3 12, TypeSpec 1.11,
 
 Одностраничное приложение + собственный серверный процесс: календарь встреч,
 целиком закрытый паролем (Q12a): без входа видна только форма логина. Вошедший
-пользователь выбирает день, во всплывающем окне выбирает слот, запись уходит по
-HTTP на express-сервер и хранится в SQLite — поэтому переживает перезапуск, а
-дубль слота отклоняется сервером. Компоненты и хуки видят только абстракции
-`MeetingsApi`, `MeetingTypesApi` и `SessionApi` (§4), смена реализации их не
-затрагивает.
+гость проходит степпер «Тип → Время → Готово» (F7, D4): выбирает тип встречи,
+день в пределах гостевого окна и свободный слот в инлайн-сетке, подтверждает
+запись — она уходит по HTTP на express-сервер и хранится в SQLite — поэтому
+переживает перезапуск, а дубль слота отклоняется сервером. Компоненты и хуки
+видят только абстракции `MeetingsApi`, `MeetingTypesApi` и `SessionApi` (§4),
+смена реализации их не затрагивает.
 
 ## 2. Поток данных
 
@@ -29,29 +30,28 @@ main.tsx ── MantineProvider(dark) + DatesProvider(APP_LOCALE) ──> App: �
               │  loading → «Восстановление сессии…»; session = null → LoginScreen;
               │  вошёл → шапка (бейдж роли, «Выйти») и вид по роли сервера:
               │  admin → Админ-панель (заглушка, F6), guest → GuestView
-                                                                 │
-        ┌────────────────────────────────────────────────────────┤
-        │                                                        │
-  MeetingCalendar                                        MeetingModal
-  (DatePicker)                                           (Modal + TimeGrid)
-        │                                                        ▲
-        │ onSelect(date)                                         │ time, onBook
-        ▼                                                        │
- GuestView: selectedDate, time ─── onChangeTime ──────────────────┘
-        │
-        │ handleBook(draft) ──► await createMeeting(draft) ──► Meeting | null
+                                                                  │
+                       GuestView (F7, D4): Stepper «Тип → Время → Готово»
+                       (шаг, typeId, selectedDate, time, lastBooked)
+        ┌────────────────────────────┬────────────────────────────┐
+        │                            │                            │
+  шаг «Тип»: Radio-список    MeetingCalendar              TimeSlots (шаг «Время»)
+  активных типов              (DatePicker)                 (TimeGrid под календарём)
+        ▲                            │ onSelect(date)             ▲
+        │                            ▼                            │ onChangeTime(time)
+ useMeetingTypes(api)          selectedDate ─── takenTimes ───────┘
+        │                            │
+        │                            │ handleBook ──► createMeeting({ date, time, meeting_type_id })
+        │                            ▼
+        │                  useMeetings(api) ──► MeetingsApi ──► createHttpMeetingsApi ──► fetch /api/meetings
+        │                            │                              (в dev — Vite-прокси, в проде — тот же origin)
+        │                            │                              ▼
+        │                            └─► meetings ─► takenTimes ─► TimeSlots disableTime   express (server/):
+        │                                  │                validate (формат ajv) + целостность (тип, booker из сессии) → repository → SQLite
+        │                                  └─► loading/error ─► «Загрузка записей…» / Alert   (data/meetings.sqlite)
         ▼
- useMeetings(api) ──► MeetingsApi ──► createHttpMeetingsApi ──► fetch /api/meetings
-        │                                                          (в dev — Vite-прокси,
-        │                                                           в проде — тот же origin)
-        │                                                          ▼
-        └─► meetings ─► GuestView.takenTimes ─► MeetingModal disableTime   express (server/):
-        │                                 validate (формат ajv) + целостность (тип, booker из сессии) → repository → SQLite
-        │                                                           (data/meetings.sqlite)
-        └─► meetings / error / loading ─► строки статуса под календарём
-
- useMeetingTypes(api) ──► MeetingTypesApi ──► createHttpMeetingTypesApi ──► fetch /api/meeting-types
-        (загрузка, создание, деактивация типов; F3 — хук и адаптер без UI)
+ MeetingTypesApi ──► createHttpMeetingTypesApi ──► fetch /api/meeting-types
+   (F3/F7: гостю — только активные типы; создание/деактивация — админ, F6)
 
  useSession(api) ──► SessionApi ──► createHttpSessionApi ──► fetch /api/login, /api/logout, /api/me
         (вход/выход, роль + bookerName, восстановление из GET /api/me; хук — F2,
@@ -82,7 +82,7 @@ Mantine, ни от его внутреннего устройства.
 | --- | --- | --- |
 | `lib/` | `date.ts`, `window.ts`, `slots.ts`, `meetings/{types,api,inMemory,http}.ts`, `meeting-types/{types,api,inMemory,http}.ts`, `session/{types,api,inMemory,http}.ts` | Ноль React и ноль Mantine. Чистые функции и типы, тесты лежат рядом. Модули `meetings/`, `meeting-types/` и `session/` зеркалят друг друга и не зависят друг от друга. |
 | `hooks/` | `useMeetings.ts`, `useMeetingTypes.ts`, `useSession.ts` | Единственное место, которое оборачивает `lib` в React-состояние, и единственные мосты к `MeetingsApi`, `MeetingTypesApi` и `SessionApi`. |
-| `components/` | `MeetingCalendar.tsx`, `MeetingModal.tsx`, `LoginScreen.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
+| `components/` | `MeetingCalendar.tsx`, `TimeSlots.tsx`, `LoginScreen.tsx` | Только рендер. Пропсы на входе, доменных правил нет. |
 | `App.tsx`, `GuestView.tsx` | — | Только UI-состояние страниц (сессия и форма входа; состояние букинга) и раскладка. Не импортируют `@mantine/dates`. |
 
 Зависимости строго односторонние: `App/GuestView → components → lib`,
@@ -230,18 +230,21 @@ const moment = now(); // фиксируется на рендер: excludeDate �
 <DatePicker excludeDate={(date) => !isBookableDay(date, moment)} />
 ```
 
-**Выбор слота живёт в `GuestView`, а не в модалке** (`src/components/MeetingModal.tsx:32`).
-Очевидная версия — `useState` внутри модалки — упирается в
-`react/set-state-in-effect`: сброс при смене даты пришлось бы делать в эффекте, а
-правило его запрещает. Контролируемый пропс `time` сбрасывается прямо в
-обработчике клика по дате (`src/GuestView.tsx:54`), `key`-remount не нужен:
+**Выбор слота — контролируемый пропс `TimeSlots`, состояние в `GuestView`**
+(`src/components/TimeSlots.tsx`). Очевидная версия — `useState` внутри
+компонента сетки — упирается в `react/set-state-in-effect`: сброс при смене
+даты пришлось бы делать в эффекте, а правило его запрещает. Пропс `time`
+сбрасывается прямо в обработчике клика по дате (`src/GuestView.tsx`,
+`selectDate`), `key`-remount не нужен:
 
 ```tsx
 onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date); }}
 ```
 
-Побочная выгода: `MeetingModal` всегда смонтирован и получает `date: string | null`,
-где `null` означает закрыто, поэтому Mantine не теряет анимацию закрытия.
+Ступени гостевого вида (F7) устроены так же: `step` — состояние страницы,
+«Далее» не даёт перейти дальше без выбора, а `allowNextStepsSelect={false}`
+запрещает прыжок на «Готово» мимо даты и времени — назад можно только на
+пройденные шаги.
 
 **Первичная загрузка объявлена инлайном в эффекте, а не вызовом `refresh`**
 (`src/hooks/useMeetings.ts:79`). Правило `react/set-state-in-effect` срабатывает
@@ -249,21 +252,25 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 эффекта — даже если `setState` происходит после `await`. Отсюда флаг `cancelled`:
 он же спасает от двойного вызова эффекта в `StrictMode`.
 
-**`lastBooked` хранит `MeetingDraft`, а не `Meeting`** (`src/GuestView.tsx:24`). Нужен
-только для строки «Запись: …». У `Meeting` нет времени создания, поэтому «самая
-свежая» из отсортированного массива не выводится, а «последняя по дате» — это не
-то, что записал пользователь. Строка ставится только если `createMeeting`
-вернул запись (при неудаче — `null`), и сбрасывается выбором дня прямо в
-`onSelect`, без эффектов.
+**`lastBooked` — снимок `{ typeName, date, time }`, а не `Meeting`**
+(`src/GuestView.tsx`, тип `BookedSummary`). Нужен только для Alert'а «Запись:
+…», а у `Meeting` нет ни имени типа (строка должна называть тип, которого в
+ответе сервера нет), ни времени создания — «самая свежая» из отсортированного
+массива не выводится. Строка ставится только если `createMeeting` вернул
+запись (при неудаче — `null`), и сбрасывается сменой любого выбора (типа, даты,
+слота) прямо в обработчиках, без эффектов.
 
-**Пропы `api` и `sessionApi` в `App` — не удобство, а необходимость** (`src/App.tsx:12`).
-`lib/meetings/api.ts:19` экспортирует модульный синглтон; без подмены записи
-утекают между тестами одного файла, слот оказывается `disabled`, `userEvent`
-кликает по неактивной кнопке, `time` не выставляется, и тест падает по таймауту
-`findBy`. Воспроизведено: с синглтоном падает тест «занятый слот в следующий раз
-не выбирается». Тот же аргумент за `sessionApi`: `lib/session/api.ts` — синглтон
-того же вида, а приложение целиком закрыто входом (Q12a), поэтому тест логина
-обязан подставить свой фейк сессии (T6).
+**Пропы `api`, `typesApi` и `sessionApi` в `App` — не удобство, а необходимость**
+(`src/App.tsx`). `lib/meetings/api.ts` экспортирует модульный синглтон; без
+подмены записи утекают между тестами одного файла, слот оказывается `disabled`,
+`userEvent` кликает по неактивной кнопке, `time` не выставляется, и тест падает
+по таймауту `findBy`. Воспроизведено: с синглтоном падает тест «занятый слот в
+следующий раз не выбирается». `lib/meeting-types/api.ts` — синглтон того же
+вида: с F7 гостевой вид грузит типы сразу после входа, и без фейка этот запрос
+в тестах умирает на jsdom-`Request`, а вид красится в ошибку загрузки. Тот же
+аргумент за `sessionApi`: `lib/session/api.ts` — синглтон того же вида, а
+приложение целиком закрыто входом (Q12a), поэтому тест логина обязан подставить
+свой фейк сессии (T6).
 
 **Фабрика, а не синглтон, в `inMemory`** (`src/lib/meetings/inMemory.ts:8`) — по
 той же причине. Отдельный тест «не делит хранилище между вызовами фабрики»
@@ -289,7 +296,7 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 | Другое рабочее время | `lib/slots.ts:2-8` (константы) или аргументы `generateTimeSlots`. |
 | Горизонт списка записей | `lib/window.ts` `WINDOW_DAYS` (гостевое окно Q5): верхняя граница списка — `windowEnd(now())` в `useMeetings`. Админский список окном не ограничен (Q6) — придёт с S4/F6. |
 | Ручное обновление списка | `refresh` уже возвращается хуком (`useMeetings.ts:55`), но UI его пока не вызывает — кнопка добавится без изменения хука. |
-| Список всех записей (не только модалка) | `GuestView.tsx` получает весь массив `meetings`; сортировка и фильтрация — его дело, а не компонентов. |
+| Список всех записей (не только сетка слотов) | `GuestView.tsx` получает весь массив `meetings`; сортировка и фильтрация — его дело, а не компонентов. |
 
 ## 7. Известные ограничения
 
@@ -297,11 +304,11 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 которую полезно знать до начала работы.
 
 1. **Занятые дни не помечены в календаре.** Единственное место, где записи
-   влияют на UI, — `disableTime` в модалке (`src/GuestView.tsx:27`). Это решение из
-   плана: «сводная строка под календарём, без маркеров на ячейках».
-   Если понадобится подсветка, `MeetingCalendar` принимает `bookedDates` и
-   `getDayProps` — **но** `selected` в `getDayProps` затирает выделение,
-   вычисленное самим `DatePicker`, поэтому нужно
+   влияют на UI, — `disableTime` в `TimeSlots` (`src/components/TimeSlots.tsx`).
+   Это решение из плана: «сводная строка под календарём, без маркеров на
+   ячейках». Если понадобится подсветка, `MeetingCalendar` принимает
+   `bookedDates` и `getDayProps` — **но** `selected` в `getDayProps` затирает
+   выделение, вычисленное самим `DatePicker`, поэтому нужно
    `value === date || bookedDates.includes(date)`. Свой `disabled` в
    `getDayProps` передавать нельзя: он вычисляется раньше `excludeDate` и тихо
    его ломает.
@@ -317,17 +324,18 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
    берётся из подписанной сессии, а не из тела (Q4/C10). Прошедшие даты,
    выходные и время вне сетки слотов сервер принимает — доменная политика
    целиком на фронте (§4, C1). UI такие draft'ы не генерирует
-   (`excludeDate` в календаре, сетка `TimeGrid`, `disableTime` в модалке),
+   (`excludeDate` в календаре, `disableTime` в `TimeSlots`),
    поэтому дыра достижима только обходом UI; мусорные записи не показываются
    как занятые. При появлении второго клиента или публичного API — валидировать
    на сервере и домен, вынося правила в общий модуль (§6).
 
 ## 8. Тестовая стратегия
 
-182 теста: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 8, `http` 7),
+188 тестов: `date.ts` 13, `window.ts` 13, `slots.ts` 4, `meetings` (`inMemory` 8, `http` 7),
 `meeting-types` (`inMemory` 7, `http` 8), `session` (`inMemory` 8, `http` 10),
 `useMeetings` 7, `useMeetingTypes` 6, `useSession` 7,
-`MeetingModal` 8, `App` 16 (сквозные сценарии гейта по сессии: вход, роль, выход)
+`TimeSlots` 4, `GuestView` 18 (сценарии букинга F7: тип, слот, подтверждение,
+Alert'и), `App` 8 (сквозные сценарии гейта по сессии: вход, роль, выход)
 — и серверные: `repository` 11,
 `meeting-types-repository` 6, `routes` 36, `contract` 7 (артефакты и статус-коды контракта плюс сверка смонтированных
 роутов со спекой и порядка сеанс-гейта). Фронтовые тесты
@@ -373,8 +381,14 @@ better-sqlite3 включены по умолчанию — тест репоз�
   Это пробел окружения, а не поведение адаптера: прод использует пустой
   `baseUrl` и браузерный резолвинг.
 
-Каждый новый тест проверен мутацией: `takenTimes={[]}` валит тест «занятый
-слот в следующий раз не выбирается», удаление `setLastBooked(draft)` из
+Каждый новый тест проверен мутацией. В F7 харнесс из 21 мутации убил все:
+удаление `meeting_type_id` из draft'а валит тест на payload, `if (created !==
+null)` → `if (true)` — тест на ошибку создания, `disabled` у кнопки «Далее» —
+тест на закрытые переходы. Один выживший (снятие `setLastBooked(null)` из
+`selectType`) пойман добавленным тестом «после записи смена типа гасит строку
+успеха» — так ловится и «зелёный, но ничего не проверяющий» тест. Раньше то же:
+`takenTimes={[]}` валит тест «занятый
+слот в следующий раз не выбирается», удаление `setLastBooked` из
 `handleBook` — три теста: два прежних и новый, на сброс строки. Это дешевле,
 чем потом отлаживать «зелёный, но ничего не проверяющий» тест. Такая ловушка
 уже случалась: тест «create бросает при 400 и 409» проверял лишь `rejects.toThrow()`,
