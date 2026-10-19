@@ -103,16 +103,22 @@ describe('createHttpMeetingsApi', () => {
     );
   });
 
-  it('клиент шлёт credentials: include — без них cookie-сессия не уйдёт (D3)', async () => {
-    let captured: Request | undefined;
+  it('клиент шлёт credentials: include на list и create — без них cookie-сессия не уйдёт (D3)', async () => {
+    const captured: Request[] = [];
     stubFetch(async (input) => {
-      captured = input as Request;
-      return jsonResponse(200, []);
+      const request = input as Request;
+      captured.push(request);
+      // Форма ответа зависит от метода: список — массив, создание — Meeting.
+      return request.method === 'POST'
+        ? jsonResponse(201, { id: '1', date: '2026-01-02', time: '10:00' })
+        : jsonResponse(200, []);
     });
 
-    await createHttpMeetingsApi().list({ from: '2026-01-01', to: '2026-01-02' });
+    const api = createHttpMeetingsApi();
+    await api.list({ from: '2026-01-01', to: '2026-01-02' });
+    await api.create({ date: '2026-01-02', time: '10:00', meeting_type_id: '7' });
 
-    expect(captured?.credentials).toBe('include');
+    expect(captured.map((request) => request.credentials)).toEqual(['include', 'include']);
   });
 
   it('create бросает при 400 и 409 (дубль слота) с прежним русским текстом', async () => {

@@ -225,7 +225,7 @@ describe('routes /api/auth', () => {
     expect((await fetch(`${baseUrl}/api/me`)).status).toBe(401);
   });
 
-  it('POST /api/logout сбрасывает cookie, следующий запрос — 401', async () => {
+  it('POST /api/logout очищает cookie теми же опциями, а следующий запрос — 401 (T8/Q13)', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
 
     const logout = await fetch(`${baseUrl}/api/logout`, {
@@ -233,14 +233,30 @@ describe('routes /api/auth', () => {
       headers: { Cookie: adminCookie },
     });
     expect(logout.status).toBe(204);
+
     const cleared = logout.headers.get('set-cookie') ?? '';
-    // cookie уходит пустой значением с истёкшим Expires — то же path/secure.
+    // Симметрия опций (Q13): clearCookie обязан нести те же Path/HttpOnly/
+    // SameSite, что и выдача (в тестах cookie без Secure), — иначе браузер не
+    // найдёт cookie по ключу и не удалит её.
+    for (const attribute of ['Path=/', 'HttpOnly', 'SameSite=Lax']) {
+      expect(cleared, `очистка должна нести ${attribute}`).toContain(attribute);
+    }
+    // Пустое значение и Expires в прошлом и БЕЗ Max-Age: иначе браузер продлил
+    // бы жизнь уже очищенной cookie (Express в clearCookie сам снимает maxAge).
     expect(cleared).toContain('session=;');
     expect(cleared).toMatch(/Expires=Thu, 01 Jan 1970/i);
+    expect(cleared).not.toContain('Max-Age');
 
-    // Сервер не может отозвать подписанную cookie — «после выхода» = браузер
-    // выбросил очищенную cookie, и следующий запрос идёт без неё.
-    expect((await fetch(`${baseUrl}/api/me`)).status).toBe(401);
+    // Подписанную cookie сервер отозвать не может (Q13), поэтому «после выхода»
+    // — это браузер, выбросивший очищенную cookie: следующий запрос уходит с
+    // пустым `session=`. Он обязан отвергаться так же, как отсутствие cookie.
+    for (const cookie of [undefined, 'session=']) {
+      const response = await fetch(
+        `${baseUrl}/api/me`,
+        cookie === undefined ? undefined : { headers: { Cookie: cookie } },
+      );
+      expect(response.status, `cookie: ${cookie}`).toBe(401);
+    }
   });
 });
 
@@ -454,6 +470,21 @@ describe('routes /api/meetings (за requireSession)', () => {
       headers: { Cookie: forged },
     });
     expect(response.status).toBe(401);
+  });
+
+  it('невалидная cookie без подписи, пустая и мусорная отвечают 401 (T2)', async () => {
+    const { baseUrl } = await createTestApp();
+    // Отдельно от подделки подписи (выше). Ключевой случай — cookie БЕЗ подписи:
+    // обычный JSON с role: admin. Сервер обязан читать только signedCookies, а
+    // не req.cookies, иначе незаверенная роль прошла бы (T2). Пустое значение —
+    // то, что остаётся в браузере после logout; мусор — не-JSON.
+    const unsigned = encodeURIComponent(JSON.stringify({ role: 'admin', bookerName: null }));
+    for (const cookie of [`session=${unsigned}`, 'session=', 'session=garbage']) {
+      const response = await fetch(`${baseUrl}/api/meetings?from=2026-01-01&to=2026-12-31`, {
+        headers: { Cookie: cookie },
+      });
+      expect(response.status, `cookie: ${cookie}`).toBe(401);
+    }
   });
 
   it('GET возвращает пустой список', async () => {
@@ -695,6 +726,22 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
     const response = await getPlanned(baseUrl, adminCookie);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([]);
+  });
+
+  it('подделанная cookie с role: admin не открывает админ-ручку — 401 (T2)', async () => {
+    const { baseUrl } = await createTestApp();
+    // Эскалация прав: злоумышленник заявляет role: admin. Две формы подделки —
+    // (1) своя подпись поверх admin-payload'а не совпадает, cookie-parser отдаёт
+    // false; (2) cookie вовсе без подписи. Обе обрываются на requireSession (401)
+    // и не доходят до requireRole: без чтения только signedCookies незаверенная
+    // роль прошла бы как admin. Ту же подделку на ГОСТЕВОЙ ручке ловит тест в
+    // /api/meetings; здесь важно, что она не открывает именно админскую.
+    const payload = JSON.stringify({ role: 'admin', bookerName: null });
+    const unsigned = encodeURIComponent(payload);
+    const mismatchedSignature = `session=s%3A${Buffer.from(payload).toString('base64url')}.deadbeef`;
+    for (const forged of [mismatchedSignature, `session=${unsigned}`]) {
+      expect((await getPlanned(baseUrl, forged)).status, `cookie: ${forged}`).toBe(401);
+    }
   });
 
   it('отдаёт join-DTO: тип и автор у новой записи, «null» у легаси; прошлое отсечено (C5/Q6)', async () => {
