@@ -123,16 +123,26 @@ describe('createHttpSessionApi', () => {
     await expect(createHttpSessionApi().me()).rejects.toThrow('GET /api/me вернул 500');
   });
 
-  it('клиент шлёт credentials: include — без них cookie-сессия не уйдёт (D3)', async () => {
-    let captured: Request | undefined;
+  it('клиент шлёт credentials: include на login, logout и me — без них cookie-сессия не уйдёт (D3)', async () => {
+    const captured: Request[] = [];
     stubFetch(async (input) => {
-      captured = input as Request;
+      captured.push(input as Request);
       return jsonResponse(200, { role: 'admin', bookerName: null });
     });
 
-    await createHttpSessionApi().me();
+    const api = createHttpSessionApi();
+    await api.login({ password: 'p' });
+    await api.logout();
+    await api.me();
 
-    expect(captured?.credentials).toBe('include');
+    // Клиент один на все три вызова, поэтому без credentials ни вход (не
+    // получит cookie), ни выход (не отдаст её), ни восстановление сессии
+    // (cookie не уйдёт) не сработают (D3).
+    expect(captured.map((request) => request.credentials)).toEqual([
+      'include',
+      'include',
+      'include',
+    ]);
   });
 
   it('me бросает, когда fetch сам упал (ошибка сети)', async () => {
