@@ -1,0 +1,12 @@
+meta:
+  environment: docker
+  toolchain:
+    name: docker
+
+build:
+  dockerfile: calendar-of-meetings/Dockerfile
+  context: calendar-of-meetings
+
+run:
+  containerPort: 4000
+  persistenceMount: /app/data
