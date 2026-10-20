@@ -5,7 +5,6 @@ meta:
 
 build:
   dockerfile: calendar-of-meetings/Dockerfile
-  context: calendar-of-meetings
 
 run:
   containerPort: 4000

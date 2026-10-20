@@ -17,17 +17,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Зависимости (включая devDependencies для контракта и сборки)
-COPY package.json package-lock.json .npmrc ./
+COPY calendar-of-meetings/package.json calendar-of-meetings/package-lock.json calendar-of-meetings/.npmrc ./
 ENV CFLAGS="-O2 -march=x86-64"
 ENV CXXFLAGS="-O2 -march=x86-64"
 RUN npm ci
 
 # Исходники и всё необходимое для контракта/сборки
-COPY contract ./contract
-COPY public ./public
-COPY server ./server
-COPY src ./src
-COPY index.html vite.config.ts postcss.config.cjs tsconfig*.json openapi-ts.config.ts ./
+COPY calendar-of-meetings/contract ./contract
+COPY calendar-of-meetings/public ./public
+COPY calendar-of-meetings/server ./server
+COPY calendar-of-meetings/src ./src
+COPY calendar-of-meetings/index.html calendar-of-meetings/vite.config.ts calendar-of-meetings/postcss.config.cjs calendar-of-meetings/tsconfig*.json calendar-of-meetings/openapi-ts.config.ts ./
 
 # Генерация контракта + типы + билд фронта + билд сервера
 RUN npm run build
@@ -48,7 +48,7 @@ WORKDIR /app
 
 # Копируем node_modules с уже собранными нативными модулями из builder
 COPY --from=builder /app/node_modules ./node_modules
-COPY package.json package-lock.json ./
+COPY calendar-of-meetings/package.json calendar-of-meetings/package-lock.json ./
 
 # Собранные артефакты
 COPY --from=builder /app/dist ./dist
@@ -58,7 +58,7 @@ COPY --from=builder /app/dist-server ./dist-server
 COPY --from=builder /app/contract/schema ./contract/schema
 
 # Entrypoint
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY calendar-of-meetings/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Папка под SQLite
