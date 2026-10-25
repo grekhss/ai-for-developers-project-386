@@ -83,8 +83,9 @@ npm 10 locally.
   and every PR run the full `npm run check` gate (contract:check + oxlint +
   both tsc gates + vitest), so the gate is automatic, not manual. One
   exception: PRs opened by `GITHUB_TOKEN` (the release-please PR) never
-  trigger workflows — a GitHub limitation; their commits already passed the
-  gate in their own branches.
+  trigger workflows — a GitHub limitation. That PR only bumps the version and
+  CHANGELOG; the code it packages was already checked when it landed on
+  `main`, but the release commit itself is not run through CI.
 - There is **no `README.md` in the app package** — the Hexlet template one was
   removed in `e8322d2`; the repo-root [`README.md`](README.md) covers the
   published service and running locally.
@@ -95,9 +96,9 @@ npm 10 locally.
   feedback comes from the language server (`npm run lint:lsp`, verified working)
   wired up in your editor, or from `npm run check` by hand.
 - **There is deliberately no pre-commit hook** — no husky, no lint-staged, no
-  active git hooks; the linter runs in CI (`ci.yml`, on every push and PR)
-  instead. Don't add a hook unprompted; check whether the project has settled
-  first.
+  active git hooks; the linter runs in CI (`ci.yml`, on PRs and pushes to
+  `main`) instead. Don't add a hook unprompted; check whether the project has
+  settled first.
 - **`plugins` in `.oxlintrc.json` *replaces* the default plugin set, it does not
   extend it.** Adding one plugin silently disables the others, so the array must
   list every plugin the project wants. (`unicorn` is on by default in oxlint but

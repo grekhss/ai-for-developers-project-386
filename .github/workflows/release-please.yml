@@ -16,6 +16,12 @@ permissions:
   pull-requests: write
   issues: write
 
+# Релизный PR должен собираться строго по одному: параллельный прогон
+# может создать или обновить тот же PR и оставить противоречивые ветки.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
