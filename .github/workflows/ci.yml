@@ -1,0 +1,55 @@
+name: ci
+
+# Проверки репозитория: contract:check + oxlint + оба tsc-гейта + vitest.
+# hexlet-check.yml — внешняя проверка Hexlet, её не трогаем; этот workflow —
+# наш полный гейт, тот же `npm run check`, что и локально.
+#
+# Push-триггер оставлен только для main: у ветки с открытым PR каждый пуш
+# и так запускает pull_request-событие, а push по всем веткам давал бы
+# дубль прогона на каждый коммит.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Быстрые пуши в один и тот же PR не копят очередь — старый прогон снимается.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Минимальные права: гейт только читает исходники; npm ci исполняет
+# install-скрипты, и давать ему write-токен незачем.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Пакет один — calendar-of-meetings; корневого package.json нет.
+    defaults:
+      run:
+        working-directory: calendar-of-meetings
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Креды checkout'а дальше не нужны — не оставляем их job'е.
+          persist-credentials: false
+
+      # Node 20, не выше: пины jsdom@^29, jest-dom@~6.9.1 и TypeSpec ~1.11.0
+      # завязаны на Node 20 (см. AGENTS.md, «Testing»).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: calendar-of-meetings/package-lock.json
+
+      # .npmrc пакета (legacy-peer-deps) подхватывается по working-directory.
+      - name: Install dependencies
+        run: npm ci
+
+      # Полный гейт: contract:check (дрейф артефактов) + oxlint + tsc -b +
+      # tsc -p tsconfig.server.json --noEmit + vitest.
+      - name: Contract drift, lint, typecheck and tests
+        run: npm run check

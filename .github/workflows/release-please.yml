@@ -1,0 +1,35 @@
+name: release-please
+
+# Релизы по Conventional Commits: на push в main собирает релизный PR с bump
+# версии пакета calendar-of-meetings и CHANGELOG; типы feat/fix в истории
+# определяют semver (см. AGENTS.md, «Commits»). Отдельный workflow — не ci.
+on:
+  push:
+    branches:
+      - main
+
+# issues: write обязателен: при первом релизе release-please вешает на
+# релизный PR несуществующий лейбл `autorelease: pending` — без этого права
+# GitHub отвечает 403 и action падает (googleapis/release-please-action#1105).
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# Релизный PR должен собираться строго по одному: параллельный прогон
+# может создать или обновить тот же PR и оставить противоречивые ветки.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: googleapis/release-please-action@v5
+        with:
+          # Манифест-режим: корневого package.json нет, пакет живёт в
+          # calendar-of-meetings/ — путь и версия описаны в манифесте.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

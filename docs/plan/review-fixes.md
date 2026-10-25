@@ -55,27 +55,40 @@ Conventional Commits, `feat!` сопровождается телом с поя�
 - Коммит: `docs: move AGENTS.md to the repo root and adopt Conventional
   Commits` (`dac2429`).
 
-## Задача 2 — GitHub Actions: проверки + release-please (замечание 5)
+## Задача 2 — GitHub Actions: проверки + release-please (замечание 5) — выполнена
 
-- `.github/workflows/ci.yml`: триггеры — push во все ветки (`branches:
-  ['**']`, как у `hexlet-check.yml`) и `pull_request`; checkout; setup-node с
-  Node 20 (пины jsdom/jest-dom/TypeSpec завязаны на Node 20), `cache: npm`,
-  `cache-dependency-path: calendar-of-meetings/package-lock.json`; `npm ci` и
-  `npm run check` с `working-directory: calendar-of-meetings`.
-- `.github/workflows/release-please.yml`: `googleapis/release-please-action@v4`
-  на push в `main`, `permissions: contents: write, pull-requests: write`.
+- `.github/workflows/ci.yml`: триггеры — push в `main` + `pull_request`
+  (push во все ветки давал бы дубль прогона у ветки с открытым PR — находка
+  ревью PR #29), `concurrency` с `cancel-in-progress`, `permissions:
+  contents: read`, checkout с `persist-credentials: false`, `timeout-minutes`;
+  setup-node с Node 20 (пины jsdom/jest-dom/TypeSpec завязаны на Node 20),
+  `cache: npm`, `cache-dependency-path: calendar-of-meetings/package-lock.json`;
+  `npm ci` и `npm run check` с `working-directory: calendar-of-meetings`.
+- `.github/workflows/release-please.yml`: `googleapis/release-please-action@v5`
+  на push в `main`, `permissions: contents: write, pull-requests: write,
+  issues: write` — `issues: write` обязателен для лейбла
+  `autorelease: pending` на первом релизе (блокирующая находка ревью PR #29).
   Корневой `release-please-config.json` с записью `packages`:
-  `{"calendar-of-meetings": {"release-type": "node"}}` (корневого
-  `package.json` нет — манифест-режим обязателен) и `.release-please-manifest.json`
-  с ключом `"calendar-of-meetings": "0.0.0"`.
+  `{"calendar-of-meetings": {"release-type": "node", "initial-version":
+  "0.1.0", "bump-minor-pre-major": true}}` (корневого `package.json` нет —
+  манифест-режим обязателен; `initial-version` закрепляет первый релиз
+  0.1.0 — иначе 1.0.0, а `bump-minor-pre-major` держит breaking changes в
+  0.x на minor-бампах — находки ревью PR #29 и продуктовое решение от
+  2026-10-25) и `.release-please-manifest.json` с ключом
+  `"calendar-of-meetings": "0.0.0"`. Для открытия релизных PR владельцу
+  нужно включить флаг «Allow GitHub Actions to create and approve pull
+  requests» в настройках репозитория (сейчас выключен).
 - **Доки (по находке ревью):** обновить устаревающие строки `AGENTS.md` —
   «nothing in CI does, so `npm run check` is manual» (буллет про hexlet-check)
   и «CI does not run the linter» (буллет про pre-commit hook): после `ci.yml`
   CI гоняет `npm run check` полностью; hexlet-check остаётся внешней
   проверкой, которую нельзя править.
 - Не трогать `hexlet-check.yml` и `opencode.yml`.
-- Коммиты: `ci: add lint, typecheck and test workflow` и `ci: add
-  release-please workflow` (+ `docs: refresh CI claims in AGENTS.md`).
+- Коммиты: `ci: add lint, typecheck and test workflow` (`3830b1d`), `ci: add
+  release-please workflow` (`320e1e4`), `docs: refresh CI claims in AGENTS.md
+  for the new workflows` (`ec2702b`), `ci: address PR review of the
+  workflows` (правки по ревью PR #29: `issues: write`, `initial-version`
+  0.1.0, триггеры без дублей, least-privilege, AGENTS.md/план).
 
 ## Задача 3 — Длительность типа встречи (замечание 1)
 
@@ -144,7 +157,9 @@ Conventional Commits, `feat!` сопровождается телом с поя�
 - Коммит: `feat!: drop password auth and sessions in favor of URL-based
   roles` — **с телом**, поясняющим breaking change (контракт: −login/me, 401,
   `booker_name` в MeetingDraft; деплой: секреты больше не нужны) — как
-  требует `AGENTS.md`.
+  требует `AGENTS.md`. Релиз после этого коммита — `0.3.0` (при релизах
+  0.1.0/0.2.0 после задач 3/4): `bump-minor-pre-major` держит breaking в 0.x
+  на minor, major не тратится.
 
 ---
 
