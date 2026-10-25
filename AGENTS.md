@@ -1,21 +1,42 @@
 # AGENTS.md
 
-Guidance for AI agents working in this app. The git repo root is one level up.
+Guidance for AI agents working in this repo. The application lives in the
+`calendar-of-meetings/` package. **Prose file paths below are relative to that
+package** (`server/routes.ts` means `calendar-of-meetings/server/routes.ts`);
+markdown links resolve from this file at the repo root. The Layout tree is
+rooted at the package directory itself.
 
 ## Правила сессии
 
 - **Общение с пользователем — только на русском:** статусы, вопросы и отчёты о
-  проделанной работе. Сообщения для коммитов — по-английски, как вся
-  существующая история репозитория.
-- **Все операции в git (add, commit, push, reset, …) выполняет только
-  пользователь.** Работа агента заканчивается отчётом: список изменённых
-  файлов и предложенное сообщение для коммита, объясняющее, что изменилось и
-  почему. (`git status` / `git log` для самопроверки — можно.)
+  проделанной работе. Сообщения для коммитов — на английском и по Conventional
+  Commits (раздел «Commits» ниже).
+- **Агент ведёт доработки в ветке и PR:** создаёт ветку, коммитит в неё и
+  открывает PR в `main`; после каждой завершённой задачи останавливается и
+  ждёт указаний по обработке замечаний в PR. Мерж и закрытие PR, push в
+  `main`, reset и прочие операции с чужими ветками — только пользователь.
+  Отчёт по задаче: список изменённых файлов и сообщение коммита с пояснением,
+  что изменилось и почему. (`git status` / `git log` для самопроверки —
+  можно.)
+
+## Commits
+
+- **Формат — [Conventional Commits](https://www.conventionalcommits.org/):**
+  `type(scope)?: subject`, на английском. Типы: `feat`, `fix`, `docs`,
+  `refactor`, `perf`, `test`, `build`, `ci`, `chore`.
+- **Breaking change — `!` сразу после типа** (`feat!: drop password auth`),
+  с пояснением в теле коммита, что именно ломается.
+- Правило действует на новые коммиты; существующая история («Add …» /
+  «Fix …») не переписывается.
+- Формат важен для релизного workflow `release-please` (появляется вместе с
+  CI-workflow): типы `feat`/`fix` в истории ветки `main` определяют версию и
+  CHANGELOG следующего релиза.
 
 ## Commands
 
-This folder is the only package in the repo — there is no root `package.json` and
-no workspaces, so every npm command runs from here. Use **npm**
+The app package `calendar-of-meetings/` is the only package in the repo — there
+is no root `package.json` and no workspaces, so every npm command below runs
+from `calendar-of-meetings/` (one level below this file). Use **npm**
 (`package-lock.json` is committed; do not introduce yarn/pnpm/bun). Node 20 /
 npm 10 locally.
 
@@ -55,8 +76,9 @@ npm 10 locally.
   `.github/workflows/hexlet-check.yml` at the repo root, which must not be
   edited, renamed, or deleted. It does **not** run lint, typecheck, or the local
   tests — nothing in CI does, so `npm run check` is manual.
-- There is **no `README.md`** — the Hexlet template one was removed in `e8322d2`.
-  Don't reference or try to update it.
+- There is **no `README.md` in the app package** — the Hexlet template one was
+  removed in `e8322d2`; the repo-root [`README.md`](README.md) covers the
+  published service and running locally.
 
 ## Linting (oxlint, not ESLint)
 
