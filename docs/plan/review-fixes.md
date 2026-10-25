@@ -70,9 +70,11 @@ Conventional Commits, `feat!` сопровождается телом с поя�
   `autorelease: pending` на первом релизе (блокирующая находка ревью PR #29).
   Корневой `release-please-config.json` с записью `packages`:
   `{"calendar-of-meetings": {"release-type": "node", "initial-version":
-  "0.1.0"}}` (корневого `package.json` нет — манифест-режим обязателен;
-  `initial-version` закрепляет первый релиз 0.1.0 — иначе 1.0.0, находка
-  ревью) и `.release-please-manifest.json` с ключом
+  "0.1.0", "bump-minor-pre-major": true}}` (корневого `package.json` нет —
+  манифест-режим обязателен; `initial-version` закрепляет первый релиз
+  0.1.0 — иначе 1.0.0, а `bump-minor-pre-major` держит breaking changes в
+  0.x на minor-бампах — находки ревью PR #29 и продуктовое решение от
+  2026-10-25) и `.release-please-manifest.json` с ключом
   `"calendar-of-meetings": "0.0.0"`. Для открытия релизных PR владельцу
   нужно включить флаг «Allow GitHub Actions to create and approve pull
   requests» в настройках репозитория (сейчас выключен).
@@ -155,7 +157,9 @@ Conventional Commits, `feat!` сопровождается телом с поя�
 - Коммит: `feat!: drop password auth and sessions in favor of URL-based
   roles` — **с телом**, поясняющим breaking change (контракт: −login/me, 401,
   `booker_name` в MeetingDraft; деплой: секреты больше не нужны) — как
-  требует `AGENTS.md`.
+  требует `AGENTS.md`. Релиз после этого коммита — `0.3.0` (при релизах
+  0.1.0/0.2.0 после задач 3/4): `bump-minor-pre-major` держит breaking в 0.x
+  на minor, major не тратится.
 
 ---
 

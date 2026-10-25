@@ -32,9 +32,11 @@ rooted at the package directory itself.
   (`.github/workflows/release-please.yml`): типы `feat`/`fix` в истории ветки
   `main` определяют версию и CHANGELOG следующего релиза пакета. Первый
   релиз — `0.1.0` (`initial-version` в `release-please-config.json`; без
-  него первый релиз был бы `1.0.0`). Для открытия релизных PR в настройках
-  репозитория должен быть включён флаг «Allow GitHub Actions to create and
-  approve pull requests».
+  него первый релиз был бы `1.0.0`), а breaking change в 0.x поднимает
+  minor, не major (`bump-minor-pre-major: true`, конвенция semver для
+  начальной разработки; `1.0.0` объявляется осознанно через `release-as`).
+  Для открытия релизных PR в настройках репозитория должен быть включён
+  флаг «Allow GitHub Actions to create and approve pull requests».
 
 ## Commands
 
