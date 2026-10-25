@@ -1,8 +1,10 @@
 # AGENTS.md
 
 Guidance for AI agents working in this repo. The application lives in the
-`calendar-of-meetings/` package; file paths and commands below are relative to
-that package unless stated otherwise.
+`calendar-of-meetings/` package. **Prose file paths below are relative to that
+package** (`server/routes.ts` means `calendar-of-meetings/server/routes.ts`);
+markdown links resolve from this file at the repo root. The Layout tree is
+rooted at the package directory itself.
 
 ## Правила сессии
 
@@ -26,8 +28,9 @@ that package unless stated otherwise.
   с пояснением в теле коммита, что именно ломается.
 - Правило действует на новые коммиты; существующая история («Add …» /
   «Fix …») не переписывается.
-- Формат важен для релизного workflow (`release-please`): типы `feat`/`fix`
-  в истории ветки `main` определяют версию и CHANGELOG следующего релиза.
+- Формат важен для релизного workflow `release-please` (появляется вместе с
+  CI-workflow): типы `feat`/`fix` в истории ветки `main` определяют версию и
+  CHANGELOG следующего релиза.
 
 ## Commands
 
@@ -513,7 +516,7 @@ calendar-of-meetings/
     └── test/setup.ts       # matchMedia + ResizeObserver stubs, dayjs locale, RTL cleanup (app-проект vitest)
 ```
 
-**Read `calendar-of-meetings/ARCHITECTURE.md` first.** It covers the layers, the `MeetingsApi`
+**Read `ARCHITECTURE.md` first.** It covers the layers, the `MeetingsApi`
 contract, the decisions that cost something (controlled slot in `GuestView`,
 inlined mount load, `api`/`typesApi`/`plannedApi`/`sessionApi` props in `App`) and
 the known gaps. This file covers commands, conventions, and Mantine traps — the
