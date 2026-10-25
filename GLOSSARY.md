@@ -48,8 +48,8 @@ _Avoid_: visitor, public
 ## Meetings
 
 **Meeting type**:
-A named category of meeting, with a description, that a guest may choose when
-booking.
+A named category of meeting, with a description and a duration in minutes
+(30 to 180 in 30-minute steps), that a guest may choose when booking.
 _Avoid_: event type, meeting kind, category
 
 **Slot**:

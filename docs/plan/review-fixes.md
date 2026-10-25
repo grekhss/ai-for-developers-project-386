@@ -90,7 +90,7 @@ Conventional Commits, `feat!` сопровождается телом с поя�
   workflows` (правки по ревью PR #29: `issues: write`, `initial-version`
   0.1.0, триггеры без дублей, least-privilege, AGENTS.md/план).
 
-## Задача 3 — Длительность типа встречи (замечание 1)
+## Задача 3 — Длительность типа встречи (замечание 1) — выполнена
 
 - `contract/main.tsp`: `duration_minutes: int32` в `MeetingType` и
   `MeetingTypeDraft` (`@minValue(30) @maxValue(180)`); **явно удалить ложный
@@ -107,7 +107,13 @@ Conventional Commits, `feat!` сопровождается телом с поя�
   min 30 / max 180 / step 30) + колонка «Длительность»; `GuestView.tsx` —
   длительность в описании типа и в шаге «Готово»; тесты `AdminView.test.tsx`,
   `GuestView.test.tsx`, `lib/meeting-types/inMemory.ts`, `http.test.ts`.
-- Коммит: `feat: add meeting type duration to contract, server and UI`.
+- Коммит: `feat: add meeting type duration to contract, server and UI`
+  (`a136381`) + `fix: address PR review on the duration feature` — правки по
+  ревью PR #30: цельное описание в артефактах (строка doc-комментария,
+  начинавшаяся с `@maxValue`, обрезалась парсером TypeSpec), доменный
+  `lib/duration.ts` вместо дублирования правил во вью, точная формулировка про
+  multipleOf, закрытие БД в тесте миграции, проверка радио-описания в
+  GuestView-тесте, актуализация ARCHITECTURE/AGENTS/GLOSSARY.
 
 ## Задача 4 — Серверные проверки букинга (замечание 2)
 

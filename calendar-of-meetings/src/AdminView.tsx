@@ -1,9 +1,16 @@
 import { useState } from 'react';
-import { Alert, Button, Group, Modal, Switch, Table, Tabs, Text, TextInput, Textarea } from '@mantine/core';
+import { Alert, Button, Group, Modal, NumberInput, Switch, Table, Tabs, Text, TextInput, Textarea } from '@mantine/core';
 import { useMeetingTypes } from './hooks/useMeetingTypes.ts';
 import { usePlannedMeetings } from './hooks/usePlannedMeetings.ts';
 import { meetingTypesApi, type MeetingTypesApi } from './lib/meeting-types/api.ts';
 import { plannedMeetingsApi, type PlannedMeetingsApi } from './lib/planned-meetings/api.ts';
+import {
+  DURATION_MAX,
+  DURATION_MIN,
+  DURATION_STEP,
+  formatDurationRu,
+  isValidDuration,
+} from './lib/duration.ts';
 import { formatDateRu } from './lib/date.ts';
 
 interface AdminViewProps {
@@ -41,6 +48,14 @@ export default function AdminView({
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  // NumberInput отдаёт number | string (пустое поле — ''): валидность ниже
+  // проверяет само, а в create уходит только число.
+  const [duration, setDuration] = useState<number | string>(30);
+
+  // Длительность валидна: границы и кратность — правило lib/duration.ts, то же
+  // проверит сервер (границы — схема контракта, кратность — роут). Кнопка не
+  // даёт отправить невалидное, чтобы 400 не приходилось показывать в модалке.
+  const durationValid = isValidDuration(duration);
 
   // Один текст ошибки: и загрузка, и создание, и деактивация кладут его в свои
   // хуки. Пока открыта модалка, показываем его в ней — иначе он остался бы за
@@ -48,13 +63,20 @@ export default function AdminView({
   const error = typesError ?? meetingsError;
 
   async function handleCreate() {
-    const created = await createMeetingType({ name: name.trim(), description });
+    // Кнопка «Создать» при невалидной длительности отключена; узкий тип ради tsc.
+    if (typeof duration !== 'number') return;
+    const created = await createMeetingType({
+      name: name.trim(),
+      description,
+      duration_minutes: duration,
+    });
     // При ошибке модалка остаётся открытой (текст — в `error`): закрыв её, мы
     // потеряли бы введённые поля вместе с причиной отказа.
     if (created !== null) {
       setModalOpen(false);
       setName('');
       setDescription('');
+      setDuration(30);
     }
   }
 
@@ -84,6 +106,7 @@ export default function AdminView({
                   <Table.Tr>
                     <Table.Th>Название</Table.Th>
                     <Table.Th>Описание</Table.Th>
+                    <Table.Th>Длительность</Table.Th>
                     <Table.Th>Активен</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
@@ -92,6 +115,7 @@ export default function AdminView({
                     <Table.Tr key={type.id}>
                       <Table.Td>{type.name}</Table.Td>
                       <Table.Td>{type.description}</Table.Td>
+                      <Table.Td>{formatDurationRu(type.duration_minutes)}</Table.Td>
                       <Table.Td>
                         {/* Переключатель управляется серверным состоянием, а не
                             локальной копией: после деактивации refresh приносит
@@ -168,6 +192,17 @@ export default function AdminView({
           value={name}
           onChange={(event) => setName(event.currentTarget.value)}
         />
+        <NumberInput
+          mt="sm"
+          label="Длительность"
+          suffix=" мин"
+          required
+          min={DURATION_MIN}
+          max={DURATION_MAX}
+          step={DURATION_STEP}
+          value={duration}
+          onChange={setDuration}
+        />
         <Textarea
           mt="sm"
           label="Описание"
@@ -179,9 +214,12 @@ export default function AdminView({
           <Button variant="default" onClick={() => setModalOpen(false)}>
             Отмена
           </Button>
-          {/* Пустое имя сервер отклонит (400, @pattern("\\S")) — не даём его
-              отправить вовсе. */}
-          <Button disabled={name.trim() === ''} onClick={() => { void handleCreate(); }}>
+          {/* Пустое имя или невалидная длительность сервер отклонит (400) —
+              не даём отправить вовсе. */}
+          <Button
+            disabled={name.trim() === '' || !durationValid}
+            onClick={() => { void handleCreate(); }}
+          >
             Создать
           </Button>
         </Group>

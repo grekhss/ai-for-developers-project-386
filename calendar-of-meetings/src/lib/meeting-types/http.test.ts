@@ -47,7 +47,9 @@ describe('createHttpMeetingTypesApi', () => {
     let captured: Request | undefined;
     stubFetch(async (input) => {
       captured = input as Request;
-      return jsonResponse(200, [{ id: '1', name: 'Консультация', description: '', active: true }]);
+      return jsonResponse(200, [
+        { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: true },
+      ]);
     });
 
     const types = await createHttpMeetingTypesApi().list();
@@ -55,7 +57,9 @@ describe('createHttpMeetingTypesApi', () => {
     expect(captured?.method).toBe('GET');
     // Роли на клиенте нет: query не формируется вовсе, содержимое решает сервер.
     expect(captured?.url).toBe(`${TEST_ORIGIN}/api/meeting-types`);
-    expect(types).toEqual([{ id: '1', name: 'Консультация', description: '', active: true }]);
+    expect(types).toEqual([
+      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: true },
+    ]);
   });
 
   it('baseUrl подставляется перед путём', async () => {
@@ -74,33 +78,48 @@ describe('createHttpMeetingTypesApi', () => {
     let captured: Request | undefined;
     stubFetch(async (input) => {
       captured = input as Request;
-      return jsonResponse(201, { id: '2', name: 'Собеседование', description: '', active: true });
+      return jsonResponse(201, {
+        id: '2',
+        name: 'Собеседование',
+        description: '',
+        duration_minutes: 60,
+        active: true,
+      });
     });
 
     const created = await createHttpMeetingTypesApi().create({
       name: 'Собеседование',
       description: '',
+      duration_minutes: 60,
     });
 
     // Регрессия: без заголовка каждый POST вернул бы 400 от express.json().
     expect(captured?.method).toBe('POST');
     expect(captured?.headers.get('Content-Type')).toBe('application/json');
-    expect(await captured?.text()).toBe(JSON.stringify({ name: 'Собеседование', description: '' }));
-    expect(created).toEqual({ id: '2', name: 'Собеседование', description: '', active: true });
+    expect(await captured?.text()).toBe(
+      JSON.stringify({ name: 'Собеседование', description: '', duration_minutes: 60 }),
+    );
+    expect(created).toEqual({
+      id: '2',
+      name: 'Собеседование',
+      description: '',
+      duration_minutes: 60,
+      active: true,
+    });
   });
 
   it('deactivate уходит POST /api/meeting-types/{id}/deactivate и парсит ответ', async () => {
     let captured: Request | undefined;
     stubFetch(async (input) => {
       captured = input as Request;
-      return jsonResponse(200, { id: '7', name: 'Разбор', description: '', active: false });
+      return jsonResponse(200, { id: '7', name: 'Разбор', description: '', duration_minutes: 30, active: false });
     });
 
     const deactivated = await createHttpMeetingTypesApi().deactivate('7');
 
     expect(captured?.method).toBe('POST');
     expect(captured?.url).toBe(`${TEST_ORIGIN}/api/meeting-types/7/deactivate`);
-    expect(deactivated).toEqual({ id: '7', name: 'Разбор', description: '', active: false });
+    expect(deactivated).toEqual({ id: '7', name: 'Разбор', description: '', duration_minutes: 30, active: false });
   });
 
   it('клиент шлёт credentials: include — без них cookie-сессия не уйдёт (D3)', async () => {
@@ -123,7 +142,7 @@ describe('createHttpMeetingTypesApi', () => {
 
       // Сообщение, а не просто «бросает»: иначе тест проходит и на
       // постороннем исключении (ловушка, оплаченная в meetings/http.test.ts).
-      await expect(api.create({ name: 'Разбор', description: '' })).rejects.toThrow(
+      await expect(api.create({ name: 'Разбор', description: '', duration_minutes: 30 })).rejects.toThrow(
         `POST /api/meeting-types вернул ${status}`,
       );
     }

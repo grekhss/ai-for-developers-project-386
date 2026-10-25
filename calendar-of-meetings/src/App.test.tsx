@@ -20,7 +20,7 @@ const DATES_SETTINGS = { locale: APP_LOCALE };
 /** Активный тип по умолчанию — гостевой вид рендерит его радио-список (F7). */
 function defaultTypesApi(): MeetingTypesApi {
   return createInMemoryMeetingTypesApi([
-    { id: '1', name: 'Консультация', description: '30 минут', active: true },
+    { id: '1', name: 'Консультация', description: '30 минут', duration_minutes: 30, active: true },
   ]);
 }
 

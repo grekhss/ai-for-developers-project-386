@@ -6,7 +6,18 @@ import { useMeetings } from './hooks/useMeetings.ts';
 import { useMeetingTypes } from './hooks/useMeetingTypes.ts';
 import { meetingsApi, type MeetingsApi } from './lib/meetings/api.ts';
 import { meetingTypesApi, type MeetingTypesApi } from './lib/meeting-types/api.ts';
+import type { MeetingType } from './lib/meeting-types/types.ts';
 import { formatDateRu } from './lib/date.ts';
+import { formatDurationRu } from './lib/duration.ts';
+
+/**
+ * Подпись типа в списке: описание и длительность. Формат минут — единый
+ * формат lib/duration.ts, «30 минут» верно для всех допустимых значений.
+ */
+function typeOptionDescription(type: MeetingType): string {
+  const duration = formatDurationRu(type.duration_minutes);
+  return type.description === '' ? duration : `${type.description} · ${duration}`;
+}
 
 interface GuestViewProps {
   /** Подменяется в тестах, чтобы не делить записи между сценариями. */
@@ -110,7 +121,7 @@ export default function GuestView({ api = meetingsApi, typesApi = meetingTypesAp
                     key={type.id}
                     value={type.id}
                     label={type.name}
-                    description={type.description}
+                    description={typeOptionDescription(type)}
                   />
                 ))}
               </Stack>
@@ -145,6 +156,7 @@ export default function GuestView({ api = meetingsApi, typesApi = meetingTypesAp
             {readyToConfirm && (
               <>
                 <Text>Тип: {selectedType.name}</Text>
+                <Text>Длительность: {formatDurationRu(selectedType.duration_minutes)}</Text>
                 <Text>Дата: {formatDateRu(selectedDate)}</Text>
                 <Text>Время: {time}</Text>
               </>

@@ -37,8 +37,8 @@ describe('AdminView', () => {
   it('показывает обе вкладки D4 и таблицу типов', async () => {
     renderAdminView(
       typesApiWith([
-        { id: '1', name: 'Консультация', description: '30 минут', active: true },
-        { id: '2', name: 'Разбор', description: '', active: false },
+        { id: '1', name: 'Консультация', description: 'Короткий созвон', duration_minutes: 30, active: true },
+        { id: '2', name: 'Разбор', description: '', duration_minutes: 90, active: false },
       ]),
     );
 
@@ -47,16 +47,23 @@ describe('AdminView', () => {
 
     // Таблица появляется после загрузки типов; до неё на панели — текст загрузки.
     expect(await screen.findByText('Консультация')).toBeInTheDocument();
-    expect(screen.getByText('30 минут')).toBeInTheDocument();
+    expect(screen.getByText('Короткий созвон')).toBeInTheDocument();
     expect(screen.getByText('Разбор')).toBeInTheDocument();
-    // Колонки D4: Название / Описание / Активен.
+    // Длительность типа — отдельная колонка (информационное поле), формат —
+    // единый lib/duration.ts.
+    expect(screen.getByText('30 минут')).toBeInTheDocument();
+    expect(screen.getByText('90 минут')).toBeInTheDocument();
+    // Колонки D4: Название / Описание / Длительность / Активен.
     expect(screen.getByRole('columnheader', { name: 'Название' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Длительность' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Активен' })).toBeInTheDocument();
   });
 
   it('деактивация: переключатель гаснет и становится недоступен (терминально, Q7)', async () => {
     const user = userEvent.setup();
-    const typesApi = typesApiWith([{ id: '1', name: 'Консультация', description: '', active: true }]);
+    const typesApi = typesApiWith([
+      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: true },
+    ]);
     renderAdminView(typesApi);
 
     const toggle = await screen.findByRole('switch', { name: 'Консультация' });
@@ -73,7 +80,9 @@ describe('AdminView', () => {
   });
 
   it('уже деактивированный тип: переключатель выключен и недоступен', async () => {
-    renderAdminView(typesApiWith([{ id: '2', name: 'Разбор', description: '', active: false }]));
+    renderAdminView(
+      typesApiWith([{ id: '2', name: 'Разбор', description: '', duration_minutes: 90, active: false }]),
+    );
 
     const toggle = await screen.findByRole('switch', { name: 'Разбор' });
     expect(toggle).not.toBeChecked();
@@ -90,11 +99,21 @@ describe('AdminView', () => {
 
     // Mantine дописывает «*» в подпись required-поля — ищем по префиксу.
     await user.type(screen.getByLabelText(/^Название/), 'Консультация');
-    await user.type(screen.getByLabelText(/^Описание/), '30 минут');
+    await user.type(screen.getByLabelText(/^Описание/), 'Короткий созвон');
+    // Длительность: дефолт 30 валиден, но проверяем, что значение реально
+    // уходит в create — очищаем и вводим 60. Пустое поле (не число) держит
+    // «Создать» выключенной, как и невалидная длительность.
+    await user.clear(screen.getByLabelText(/^Длительность/));
+    expect(screen.getByRole('button', { name: 'Создать' })).toBeDisabled();
+
+    await user.type(screen.getByLabelText(/^Длительность/), '60');
+    expect(screen.getByRole('button', { name: 'Создать' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Создать' }));
 
     expect(await screen.findByText('Консультация')).toBeInTheDocument();
-    expect(screen.getByText('30 минут')).toBeInTheDocument();
+    expect(screen.getByText('Короткий созвон')).toBeInTheDocument();
+    // Длительность ушла в create: строка показывает 60, а не дефолтные 30.
+    expect(screen.getByText('60 минут')).toBeInTheDocument();
     // Новый тип пришёл из refresh, а не из локальной вставки: строка — серверная.
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });

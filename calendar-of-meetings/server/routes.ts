@@ -169,7 +169,17 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
     requireRole('admin'),
     (req, res) => {
       if (!isValidMeetingTypeDraft(req.body)) {
-        res.status(400).json({ error: 'name обязателен (непустая строка), description — строка' });
+        res.status(400).json({
+          error:
+            'name обязателен (непустая строка), description — строка, duration_minutes — целое от 30 до 180',
+        });
+        return;
+      }
+      // Кратность 30 — рукописная проверка в роуте: в JSON Schema есть
+      // multipleOf, но декоратора для него в TypeSpec нет — границы даёт
+      // схема, шаг — здесь. То же правило на клиенте — lib/duration.ts.
+      if (req.body.duration_minutes % 30 !== 0) {
+        res.status(400).json({ error: 'длительность должна быть кратна 30 минутам' });
         return;
       }
       // Храним обрезанное имя — как bookerName при логине. @pattern("\\S") в
@@ -178,6 +188,7 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
         repos.meetingTypes.create({
           name: req.body.name.trim(),
           description: req.body.description,
+          duration_minutes: req.body.duration_minutes,
         }),
       );
     },

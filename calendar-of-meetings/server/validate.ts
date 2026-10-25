@@ -101,7 +101,8 @@ export function isValidLogin(body: unknown): body is LoginInput {
 /**
  * Тело POST /api/meeting-types (S3): name — непустая строка с минимум одним
  * непробельным символом (`'   '` не проходит — @pattern в main.tsp, тот же
- * приём, что у пароля в K4), description — строка, обязана присутствовать.
+ * приём, что у пароля в K4), description — строка, duration_minutes — целое
+ * 30–180 (границы — в схеме; кратность 30 — в routes.ts).
  */
 export function isValidMeetingTypeDraft(body: unknown): body is CreateMeetingTypeBody {
   return isObject(body) && validMeetingTypeDraft(body);
