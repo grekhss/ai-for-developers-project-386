@@ -28,9 +28,9 @@ rooted at the package directory itself.
   с пояснением в теле коммита, что именно ломается.
 - Правило действует на новые коммиты; существующая история («Add …» /
   «Fix …») не переписывается.
-- Формат важен для релизного workflow `release-please` (появляется вместе с
-  CI-workflow): типы `feat`/`fix` в истории ветки `main` определяют версию и
-  CHANGELOG следующего релиза.
+- Формат важен для релизного workflow `release-please`
+  (`.github/workflows/release-please.yml`): типы `feat`/`fix` в истории ветки
+  `main` определяют версию и CHANGELOG следующего релиза пакета.
 
 ## Commands
 
@@ -74,8 +74,10 @@ npm 10 locally.
   `dist/` without `/api`, so meetings fail to load.
 - Hexlet's own suite is separate and external: it runs on every push via
   `.github/workflows/hexlet-check.yml` at the repo root, which must not be
-  edited, renamed, or deleted. It does **not** run lint, typecheck, or the local
-  tests — nothing in CI does, so `npm run check` is manual.
+  edited, renamed, or deleted. It does **not** run lint, typecheck, or the
+  local tests — that is `.github/workflows/ci.yml`'s job: every push and every
+  PR runs the full `npm run check` gate (contract:check + oxlint + both tsc
+  gates + vitest), so the gate is automatic, not manual.
 - There is **no `README.md` in the app package** — the Hexlet template one was
   removed in `e8322d2`; the repo-root [`README.md`](README.md) covers the
   published service and running locally.
@@ -86,8 +88,9 @@ npm 10 locally.
   feedback comes from the language server (`npm run lint:lsp`, verified working)
   wired up in your editor, or from `npm run check` by hand.
 - **There is deliberately no pre-commit hook** — no husky, no lint-staged, no
-  active git hooks, and CI does not run the linter. Don't add one unprompted;
-  check whether the project has settled first.
+  active git hooks; the linter runs in CI (`ci.yml`, on every push and PR)
+  instead. Don't add a hook unprompted; check whether the project has settled
+  first.
 - **`plugins` in `.oxlintrc.json` *replaces* the default plugin set, it does not
   extend it.** Adding one plugin silently disables the others, so the array must
   list every plugin the project wants. (`unicorn` is on by default in oxlint but

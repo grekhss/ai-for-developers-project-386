@@ -55,7 +55,7 @@ Conventional Commits, `feat!` сопровождается телом с поя�
 - Коммит: `docs: move AGENTS.md to the repo root and adopt Conventional
   Commits` (`dac2429`).
 
-## Задача 2 — GitHub Actions: проверки + release-please (замечание 5)
+## Задача 2 — GitHub Actions: проверки + release-please (замечание 5) — выполнена
 
 - `.github/workflows/ci.yml`: триггеры — push во все ветки (`branches:
   ['**']`, как у `hexlet-check.yml`) и `pull_request`; checkout; setup-node с
@@ -74,8 +74,9 @@ Conventional Commits, `feat!` сопровождается телом с поя�
   CI гоняет `npm run check` полностью; hexlet-check остаётся внешней
   проверкой, которую нельзя править.
 - Не трогать `hexlet-check.yml` и `opencode.yml`.
-- Коммиты: `ci: add lint, typecheck and test workflow` и `ci: add
-  release-please workflow` (+ `docs: refresh CI claims in AGENTS.md`).
+- Коммиты: `ci: add lint, typecheck and test workflow` (`3830b1d`), `ci: add
+  release-please workflow` (`320e1e4`), `docs: refresh CI claims in AGENTS.md
+  for the new workflows`.
 
 ## Задача 3 — Длительность типа встречи (замечание 1)
 
