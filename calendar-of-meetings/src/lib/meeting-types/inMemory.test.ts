@@ -3,9 +3,9 @@ import { createInMemoryMeetingTypesApi } from './inMemory.ts';
 import type { MeetingType } from './types.ts';
 
 const seed: MeetingType[] = [
-  { id: '1', name: 'Консультация', description: '30 минут', active: true },
-  { id: '2', name: 'Собеседование', description: '', active: false },
-  { id: '3', name: 'Разбор', description: '', active: true },
+  { id: '1', name: 'Консультация', description: '30 минут', duration_minutes: 30, active: true },
+  { id: '2', name: 'Собеседование', description: '', duration_minutes: 60, active: false },
+  { id: '3', name: 'Разбор', description: '', duration_minutes: 90, active: true },
 ];
 
 describe('createInMemoryMeetingTypesApi', () => {
@@ -23,12 +23,13 @@ describe('createInMemoryMeetingTypesApi', () => {
   it('create присваивает идентификатор, ставит active: true и сохраняет тип', async () => {
     const api = createInMemoryMeetingTypesApi();
 
-    const created = await api.create({ name: 'Консультация', description: '30 минут' });
+    const created = await api.create({ name: 'Консультация', description: '30 минут', duration_minutes: 30 });
 
     expect(created).toEqual({
       id: '1',
       name: 'Консультация',
       description: '30 минут',
+      duration_minutes: 30,
       active: true,
     });
     expect(await api.list()).toEqual([created]);
@@ -36,11 +37,11 @@ describe('createInMemoryMeetingTypesApi', () => {
 
   it('не выдаёт создаваемому типу идентификатор, занятый сидом', async () => {
     const api = createInMemoryMeetingTypesApi([
-      { id: '2', name: 'Консультация', description: '', active: true },
-      { id: '3', name: 'Разбор', description: '', active: true },
+      { id: '2', name: 'Консультация', description: '', duration_minutes: 30, active: true },
+      { id: '3', name: 'Разбор', description: '', duration_minutes: 30, active: true },
     ]);
 
-    const created = await api.create({ name: 'Собеседование', description: '' });
+    const created = await api.create({ name: 'Собеседование', description: '', duration_minutes: 60 });
 
     expect(created.id).toBe('4');
   });
@@ -50,7 +51,13 @@ describe('createInMemoryMeetingTypesApi', () => {
 
     const deactivated = await api.deactivate('1');
 
-    expect(deactivated).toEqual({ id: '1', name: 'Консультация', description: '30 минут', active: false });
+    expect(deactivated).toEqual({
+      id: '1',
+      name: 'Консультация',
+      description: '30 минут',
+      duration_minutes: 30,
+      active: false,
+    });
     expect((await api.list()).find((type) => type.id === '1')?.active).toBe(false);
     // Повторный вызов — не ошибка и не смена состояния (Q7).
     expect(await api.deactivate('1')).toEqual(deactivated);
@@ -69,7 +76,7 @@ describe('createInMemoryMeetingTypesApi', () => {
     const first = createInMemoryMeetingTypesApi(seed);
     const second = createInMemoryMeetingTypesApi(seed);
 
-    await first.create({ name: 'Собеседование', description: '' });
+    await first.create({ name: 'Собеседование', description: '', duration_minutes: 60 });
     await first.deactivate('1');
 
     expect(await first.list()).toHaveLength(4);
@@ -79,12 +86,16 @@ describe('createInMemoryMeetingTypesApi', () => {
   });
 
   it('не меняет переданный при создании массив и его элементы', async () => {
-    const source: MeetingType[] = [{ id: '1', name: 'Консультация', description: '', active: true }];
+    const source: MeetingType[] = [
+      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: true },
+    ];
     const api = createInMemoryMeetingTypesApi(source);
 
-    await api.create({ name: 'Собеседование', description: '' });
+    await api.create({ name: 'Собеседование', description: '', duration_minutes: 60 });
     await api.deactivate('1');
 
-    expect(source).toEqual([{ id: '1', name: 'Консультация', description: '', active: true }]);
+    expect(source).toEqual([
+      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: true },
+    ]);
   });
 });

@@ -193,9 +193,8 @@ export interface components {
             meeting_type_id?: string;
         };
         /**
-         * @description Тип встречи, предлагаемый администратором (Q2). Длительность не моделируется —
-         *     на сетку слотов она не влияет. Удаления нет: деактивация — единственный конец
-         *     жизненного цикла (Q7).
+         * @description Тип встречи, предлагаемый администратором (Q2). Удаления нет: деактивация —
+         *     единственный конец жизненного цикла (Q7).
          */
         MeetingType: {
             /** @description Идентификатор, присваиваемый базой данных. */
@@ -204,6 +203,12 @@ export interface components {
             name: string;
             /** @description Описание типа. */
             description: string;
+            /**
+             * Format: int32
+             * @description Длительность встречи этого типа в минутах: 30–180, кратно 30. Кратность
+             *     тридцати проверяет роут — JSON Schema кратность не выражает (
+             */
+            duration_minutes: number;
             /** @description Активен ли тип: деактивированный нельзя выбрать при новой записи (Q7). */
             active: boolean;
         };
@@ -217,6 +222,12 @@ export interface components {
             name: string;
             /** @description Описание типа. */
             description: string;
+            /**
+             * Format: int32
+             * @description Длительность встреч этого типа в минутах: те же границы и кратность, что
+             *     у MeetingType.duration_minutes (кратность — в роуте, как при чтении).
+             */
+            duration_minutes: number;
         };
         /**
          * @description Строка админского списка запланированных встреч: LEFT JOIN, поэтому у старых

@@ -20,7 +20,7 @@ describe('createDatabase: миграция схемы', () => {
     const typeColumns = (db.pragma('table_info(meeting_types)') as Array<{ name: string }>).map(
       (column) => column.name,
     );
-    expect(typeColumns).toEqual(['id', 'name', 'description', 'active']);
+    expect(typeColumns).toEqual(['id', 'name', 'description', 'duration_minutes', 'active']);
   });
 
   it('легаси-таблица bookings переименовывается в meetings, строки сохраняются', () => {
@@ -85,7 +85,7 @@ describe('createDatabase: миграция схемы', () => {
     const dbPath = join(tmpdir(), `wayfinder-s1-${randomUUID()}.sqlite`);
     try {
       const first = createDatabase(dbPath);
-      expect(first.pragma('user_version', { simple: true })).toBe(1);
+      expect(first.pragma('user_version', { simple: true })).toBe(2);
       first.close();
 
       // Второй открытие той же БД: миграция видит целевую версию и не трогает схему.
@@ -94,7 +94,7 @@ describe('createDatabase: миграция схемы', () => {
         (column) => column.name,
       );
       expect(columns).toEqual(['id', 'date', 'time', 'meeting_type_id', 'booker']);
-      expect(second.pragma('user_version', { simple: true })).toBe(1);
+      expect(second.pragma('user_version', { simple: true })).toBe(2);
       second.close();
     } finally {
       rmSync(dbPath, { force: true });

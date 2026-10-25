@@ -28,6 +28,7 @@ type MeetingTypeRow = {
   id: number;
   name: string;
   description: string;
+  duration_minutes: number;
   active: number;
 };
 
@@ -37,18 +38,22 @@ function toMeetingType(row: MeetingTypeRow): MeetingType {
     id: String(row.id),
     name: row.name,
     description: row.description,
+    duration_minutes: row.duration_minutes,
     active: row.active === 1,
   };
 }
 
 export function createMeetingTypesRepository(db: Database.Database): MeetingTypesRepository {
-  const selectAll = db.prepare('SELECT id, name, description, active FROM meeting_types ORDER BY id');
+  const columns = 'id, name, description, duration_minutes, active';
+  const selectAll = db.prepare(`SELECT ${columns} FROM meeting_types ORDER BY id`);
   const selectActive = db.prepare(
-    'SELECT id, name, description, active FROM meeting_types WHERE active = 1 ORDER BY id',
+    `SELECT ${columns} FROM meeting_types WHERE active = 1 ORDER BY id`,
   );
-  const insertStmt = db.prepare('INSERT INTO meeting_types (name, description) VALUES (?, ?)');
+  const insertStmt = db.prepare(
+    'INSERT INTO meeting_types (name, description, duration_minutes) VALUES (?, ?, ?)',
+  );
   const deactivateStmt = db.prepare('UPDATE meeting_types SET active = 0 WHERE id = ?');
-  const selectById = db.prepare('SELECT id, name, description, active FROM meeting_types WHERE id = ?');
+  const selectById = db.prepare(`SELECT ${columns} FROM meeting_types WHERE id = ?`);
 
   return {
     listActive() {
@@ -60,12 +65,13 @@ export function createMeetingTypesRepository(db: Database.Database): MeetingType
     },
 
     create(draft) {
-      const result = insertStmt.run(draft.name, draft.description);
+      const result = insertStmt.run(draft.name, draft.description, draft.duration_minutes);
       // Новый тип всегда активен: active DEFAULT 1 в схеме (S1).
       return {
         id: String(Number(result.lastInsertRowid)),
         name: draft.name,
         description: draft.description,
+        duration_minutes: draft.duration_minutes,
         active: true,
       };
     },

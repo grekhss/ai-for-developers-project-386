@@ -5,8 +5,11 @@ import Database from 'better-sqlite3';
 /**
  * Целевая версия схемы. Хранится в PRAGMA user_version: при следующей
  * миграции константа поднимается, и старые БД догоняют её ровно один раз.
+ *
+ * v2 (длительность типа): meeting_types.duration_minutes INTEGER NOT NULL
+ * DEFAULT 30 — легаси-типы без длительности получают дефолтные 30 минут.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /** Есть ли таблица с таким именем (легаси `bookings` ищем именно так). */
 function hasTable(db: Database.Database, name: string): boolean {
@@ -56,6 +59,7 @@ function migrate(db: Database.Database): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
+      duration_minutes INTEGER NOT NULL DEFAULT 30,
       active INTEGER NOT NULL DEFAULT 1
     )
   `);
@@ -67,6 +71,11 @@ function migrate(db: Database.Database): void {
   }
   if (!hasColumn(db, 'meetings', 'booker')) {
     db.exec('ALTER TABLE meetings ADD COLUMN booker TEXT');
+  }
+  // v2: длительность типа. NOT NULL DEFAULT у колонок SQLite запрещён только
+  // с REFERENCES, здесь он допустим — старые строки получают 30.
+  if (!hasColumn(db, 'meeting_types', 'duration_minutes')) {
+    db.exec('ALTER TABLE meeting_types ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 30');
   }
 
   db.pragma(`user_version = ${SCHEMA_VERSION}`);

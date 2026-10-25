@@ -6,8 +6,8 @@ import type { MeetingTypesApi } from '../lib/meeting-types/api.ts';
 import type { MeetingType } from '../lib/meeting-types/types.ts';
 
 const seed: MeetingType[] = [
-  { id: '1', name: 'Консультация', description: '30 минут', active: true },
-  { id: '2', name: 'Собеседование', description: '', active: false },
+  { id: '1', name: 'Консультация', description: '30 минут', duration_minutes: 30, active: true },
+  { id: '2', name: 'Собеседование', description: '', duration_minutes: 60, active: false },
 ];
 
 function fakeApi(types: MeetingType[] = []): MeetingTypesApi {
@@ -48,7 +48,11 @@ describe('useMeetingTypes', () => {
     const { result } = renderHook(() => useMeetingTypes(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    const created = await result.current.createMeetingType({ name: 'Разбор', description: '' });
+    const created = await result.current.createMeetingType({
+      name: 'Разбор',
+      description: '',
+      duration_minutes: 90,
+    });
 
     await waitFor(() => expect(result.current.meetingTypes).toHaveLength(1));
 
@@ -73,7 +77,7 @@ describe('useMeetingTypes', () => {
     const callsBeforeCreate = list.mock.calls.length;
 
     await expect(
-      result.current.createMeetingType({ name: 'Разбор', description: '' })
+      result.current.createMeetingType({ name: 'Разбор', description: '', duration_minutes: 90 })
     ).resolves.toBeNull();
 
     // Счётчик — сразу: если б перечитывание случилось, list был бы вызван до

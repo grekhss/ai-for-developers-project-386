@@ -301,14 +301,18 @@ describe('routes: дев-обход авторизации (AUTH_DISABLED)', () 
 
     expect((await fetch(`${baseUrl}/api/admin/meetings`, { headers: { Cookie: admin } })).status).toBe(200);
 
-    const created = await postType(baseUrl, admin, { name: 'Консультация', description: '' });
+    const created = await postType(
+      baseUrl,
+      admin,
+      { name: 'Консультация', description: '', duration_minutes: 30 },
+    );
     expect(created.status).toBe(201);
     await postType(baseUrl, admin, {}, '/api/meeting-types/1/deactivate');
     // Роль действительно admin, а не «гость с доступом»: виден и неактивный тип,
     // гостю его не показывают (listAll против listActive).
     const all = await fetch(`${baseUrl}/api/meeting-types`, { headers: { Cookie: admin } });
     expect(await all.json()).toEqual([
-      { id: '1', name: 'Консультация', description: '', active: false },
+      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: false },
     ]);
 
     expect(
@@ -406,20 +410,20 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
 
   it('админ видит все типы, гость — только активные', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
-    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '', duration_minutes: 60 });
     await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
 
     const adminResponse = await getTypes(baseUrl, adminCookie);
     expect(await adminResponse.json()).toEqual([
-      { id: '1', name: 'Консультация', description: '', active: false },
-      { id: '2', name: 'Собеседование', description: '', active: true },
+      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: false },
+      { id: '2', name: 'Собеседование', description: '', duration_minutes: 60, active: true },
     ]);
 
     // Гость: деактивированный тип не попадает в список (Q7).
     const guest = await getTypes(baseUrl, await loginAsGuest(baseUrl));
     expect(await guest.json()).toEqual([
-      { id: '2', name: 'Собеседование', description: '', active: true },
+      { id: '2', name: 'Собеседование', description: '', duration_minutes: 60, active: true },
     ]);
   });
 
@@ -428,6 +432,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
     const response = await postType(baseUrl, adminCookie, {
       name: '  Консультация  ',
       description: '30 минут',
+      duration_minutes: 30,
     });
 
     expect(response.status).toBe(201);
@@ -436,6 +441,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
       id: '1',
       name: 'Консультация',
       description: '30 минут',
+      duration_minutes: 30,
       active: true,
     });
   });
@@ -454,12 +460,16 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
     const { baseUrl, adminCookie } = await createTestApp();
     const invalidBodies = [
       {},
-      { name: 'Консультация' }, // нет description — он обязателен в контракте
+      { name: 'Консультация' }, // нет description и duration_minutes
       { description: '' }, // нет name
-      { name: '', description: '' }, // пустое имя (@minLength)
-      { name: '   ', description: '' }, // одно пробельное имя — @pattern("\\S") в main.tsp
-      { name: 42, description: '' },
-      { name: 'Консультация', description: null },
+      { name: 'X', description: '' }, // нет duration_minutes — обязателен в контракте
+      { name: '', description: '', duration_minutes: 30 }, // пустое имя (@minLength)
+      { name: '   ', description: '', duration_minutes: 30 }, // пробельное имя — @pattern("\\S") в main.tsp
+      { name: 42, description: '', duration_minutes: 30 },
+      { name: 'Консультация', description: null, duration_minutes: 30 },
+      { name: 'X', description: '', duration_minutes: 29 }, // ниже @minValue(30)
+      { name: 'X', description: '', duration_minutes: 181 }, // выше @maxValue(180)
+      { name: 'X', description: '', duration_minutes: '30' }, // строка вместо int32
       // Случай не-объекта (голая JSON-строка и т.п.) не включён: strict-режим
       // express.json отклоняет его ещё на парсинге (400 от body-parser, HTML) —
       // этот путь уже покрыт в meetings-тесте.
@@ -469,14 +479,41 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
       const response = await postType(baseUrl, adminCookie, body);
       expect(response.status, `тело ${JSON.stringify(body)}`).toBe(400);
       expect(await response.json(), `тело ${JSON.stringify(body)}`).toEqual({
-        error: 'name обязателен (непустая строка), description — строка',
+        error: 'name обязателен (непустая строка), description — строка, duration_minutes — целое от 30 до 180',
       });
+    }
+  });
+
+  it('POST длительности не кратной 30 отвечает 400 — границы 30/180 проходят', async () => {
+    const { baseUrl, adminCookie } = await createTestApp();
+    // 45 внутри границ, поэтому схема его пропускает — кратность ловит роут:
+    // JSON Schema кратность не выражает, как и длину booker у сессии.
+    const notMultiple = await postType(baseUrl, adminCookie, {
+      name: 'Консультация',
+      description: '',
+      duration_minutes: 45,
+    });
+    expect(notMultiple.status).toBe(400);
+    expect(await notMultiple.json()).toEqual({ error: 'длительность должна быть кратна 30 минутам' });
+
+    // Границы диапазона включительно: и 30, и 180 создают тип.
+    for (const durationMinutes of [30, 180]) {
+      const response = await postType(baseUrl, adminCookie, {
+        name: 'Консультация',
+        description: '',
+        duration_minutes: durationMinutes,
+      });
+      expect(response.status, `duration_minutes ${durationMinutes}`).toBe(201);
+      expect(
+        ((await response.json()) as { duration_minutes: number }).duration_minutes,
+        `duration_minutes ${durationMinutes}`,
+      ).toBe(durationMinutes);
     }
   });
 
   it('деактивация админом: 200 с active: false, повтор идемпотентен', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
 
     const first = await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
     expect(first.status).toBe(200);
@@ -484,6 +521,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
       id: '1',
       name: 'Консультация',
       description: '',
+      duration_minutes: 30,
       active: false,
     });
 
@@ -496,7 +534,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
 
   it('деактивация гостем отвечает 403', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
 
     const response = await postType(
       baseUrl,
@@ -509,7 +547,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
 
   it('деактивация неизвестного или нечислового id отвечает 400', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
 
     for (const id of ['999', 'abc']) {
       const response = await postType(baseUrl, adminCookie, {}, `/api/meeting-types/${id}/deactivate`);
@@ -678,8 +716,8 @@ describe('routes /api/meetings (за requireSession)', () => {
   it('POST с неизвестным или деактивированным meeting_type_id отвечает 400 (C1)', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
-    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '', duration_minutes: 30 });
     await postType(baseUrl, adminCookie, {}, '/api/meeting-types/2/deactivate');
 
     for (const meetingTypeId of ['999', '2']) {
@@ -698,7 +736,7 @@ describe('routes /api/meetings (за requireSession)', () => {
   it('POST с активным meeting_type_id создаёт запись и сохраняет тип', async () => {
     const { baseUrl, adminCookie, db } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
 
     const response = await postMeeting(baseUrl, guest, {
       date: '2026-03-02',
@@ -721,7 +759,7 @@ describe('routes /api/meetings (за requireSession)', () => {
     // вместе с тестом, если C1 пересмотрят в сторону общего shared/-модуля.
     const { baseUrl, adminCookie } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
 
     // Суббота — выходной (и прошедшая дата: тоже UI-политика)…
     const weekend = await postMeeting(baseUrl, guest, {
@@ -815,7 +853,7 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
   it('отдаёт join-DTO: тип и автор у новой записи, «null» у легаси; прошлое отсечено (C5/Q6)', async () => {
     const { baseUrl, adminCookie, db } = await createTestApp();
     const guest = await loginAsGuest(baseUrl, 'Иван');
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '30 минут' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '30 минут', duration_minutes: 30 });
 
     // Завтрашняя типизированная запись — через реальный POST: booker придёт из
     // сессии, тип сохранится. Это и есть сквозной позитив T9 (login → POST с
@@ -851,7 +889,7 @@ describe('routes: жизненный цикл типа (T5/Q7)', () => {
 
   it('деактивация типа с уже записанной встречей разрешена: история помнит тип, новая запись — 400', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '' });
+    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
     const guest = await loginAsGuest(baseUrl, 'Иван');
 
     const booked = await postMeeting(baseUrl, guest, {
@@ -868,7 +906,7 @@ describe('routes: жизненный цикл типа (T5/Q7)', () => {
     expect(deactivated.status).toBe(200);
     expect(((await deactivated.json()) as { active: boolean }).active).toBe(false);
     expect(await (await listTypes(baseUrl, adminCookie)).json()).toEqual([
-      { id: '1', name: 'Консультация', description: '', active: false },
+      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: false },
     ]);
 
     // История не обезличивается: у записанной встречи тип остаётся названием…

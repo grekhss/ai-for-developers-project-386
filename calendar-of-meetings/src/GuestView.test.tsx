@@ -18,8 +18,8 @@ const DATES_SETTINGS = { locale: APP_LOCALE };
 const SLOTS = generateTimeSlots();
 
 const TYPES: MeetingType[] = [
-  { id: '1', name: 'Консультация', description: '30 минут', active: true },
-  { id: '2', name: 'Собеседование', description: '60 минут', active: true },
+  { id: '1', name: 'Консультация', description: '30 минут', duration_minutes: 30, active: true },
+  { id: '2', name: 'Собеседование', description: '60 минут', duration_minutes: 60, active: true },
 ];
 
 /** Своё хранилище типов на каждый тест — тот же шов, что у записей (T1). */
@@ -246,6 +246,7 @@ describe('гостевой вид', () => {
     await user.click(screen.getByRole('button', { name: 'Далее' }));
 
     expect(screen.getByText('Тип: Консультация')).toBeInTheDocument();
+    expect(screen.getByText('Длительность: 30 минут')).toBeInTheDocument();
     expect(screen.getByText(`Дата: ${formatDateRu(date)}`)).toBeInTheDocument();
     expect(screen.getByText('Время: 11:00')).toBeInTheDocument();
   });

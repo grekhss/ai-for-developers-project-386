@@ -90,7 +90,7 @@ Conventional Commits, `feat!` сопровождается телом с поя�
   workflows` (правки по ревью PR #29: `issues: write`, `initial-version`
   0.1.0, триггеры без дублей, least-privilege, AGENTS.md/план).
 
-## Задача 3 — Длительность типа встречи (замечание 1)
+## Задача 3 — Длительность типа встречи (замечание 1) — выполнена
 
 - `contract/main.tsp`: `duration_minutes: int32` в `MeetingType` и
   `MeetingTypeDraft` (`@minValue(30) @maxValue(180)`); **явно удалить ложный
