@@ -3,6 +3,7 @@
   "packages": {
     "calendar-of-meetings": {
       "release-type": "node",
+      "initial-version": "0.1.0",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": true
     }

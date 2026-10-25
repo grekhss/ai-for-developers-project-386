@@ -30,7 +30,11 @@ rooted at the package directory itself.
   «Fix …») не переписывается.
 - Формат важен для релизного workflow `release-please`
   (`.github/workflows/release-please.yml`): типы `feat`/`fix` в истории ветки
-  `main` определяют версию и CHANGELOG следующего релиза пакета.
+  `main` определяют версию и CHANGELOG следующего релиза пакета. Первый
+  релиз — `0.1.0` (`initial-version` в `release-please-config.json`; без
+  него первый релиз был бы `1.0.0`). Для открытия релизных PR в настройках
+  репозитория должен быть включён флаг «Allow GitHub Actions to create and
+  approve pull requests».
 
 ## Commands
 
@@ -75,9 +79,12 @@ npm 10 locally.
 - Hexlet's own suite is separate and external: it runs on every push via
   `.github/workflows/hexlet-check.yml` at the repo root, which must not be
   edited, renamed, or deleted. It does **not** run lint, typecheck, or the
-  local tests — that is `.github/workflows/ci.yml`'s job: every push and every
-  PR runs the full `npm run check` gate (contract:check + oxlint + both tsc
-  gates + vitest), so the gate is automatic, not manual.
+  local tests — that is `.github/workflows/ci.yml`'s job: pushes to `main`
+  and every PR run the full `npm run check` gate (contract:check + oxlint +
+  both tsc gates + vitest), so the gate is automatic, not manual. One
+  exception: PRs opened by `GITHUB_TOKEN` (the release-please PR) never
+  trigger workflows — a GitHub limitation; their commits already passed the
+  gate in their own branches.
 - There is **no `README.md` in the app package** — the Hexlet template one was
   removed in `e8322d2`; the repo-root [`README.md`](README.md) covers the
   published service and running locally.

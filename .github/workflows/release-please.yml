@@ -8,13 +8,18 @@ on:
     branches:
       - main
 
+# issues: write обязателен: при первом релизе release-please вешает на
+# релизный PR несуществующий лейбл `autorelease: pending` — без этого права
+# GitHub отвечает 403 и action падает (googleapis/release-please-action#1105).
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: googleapis/release-please-action@v5
         with:
