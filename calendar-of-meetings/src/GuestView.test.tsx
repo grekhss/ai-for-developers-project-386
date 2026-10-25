@@ -18,8 +18,8 @@ const DATES_SETTINGS = { locale: APP_LOCALE };
 const SLOTS = generateTimeSlots();
 
 const TYPES: MeetingType[] = [
-  { id: '1', name: 'Консультация', description: '30 минут', duration_minutes: 30, active: true },
-  { id: '2', name: 'Собеседование', description: '60 минут', duration_minutes: 60, active: true },
+  { id: '1', name: 'Консультация', description: 'Онлайн-созвон', duration_minutes: 30, active: true },
+  { id: '2', name: 'Собеседование', description: '', duration_minutes: 60, active: true },
 ];
 
 /** Своё хранилище типов на каждый тест — тот же шов, что у записей (T1). */
@@ -135,6 +135,10 @@ describe('гостевой вид', () => {
     expect(screen.getByText('Готово')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Консультация/ })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Собеседование/ })).toBeInTheDocument();
+    // Подписи радио — описание и длительность в одном формате (lib/duration.ts):
+    // регрессия typeOptionDescription ловится именно здесь.
+    expect(screen.getByText('Онлайн-созвон · 30 минут')).toBeInTheDocument();
+    expect(screen.getByText('60 минут')).toBeInTheDocument();
     // Шаг «Время» ещё не показан: слотов на странице нет.
     expect(screen.queryByRole('button', { name: '09:00' })).not.toBeInTheDocument();
   });

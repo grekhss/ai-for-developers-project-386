@@ -175,8 +175,9 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
         });
         return;
       }
-      // Кратность 30 — рукописная integrity-проверка (JSON Schema кратность не
-      // выражает, как и границы booker у сессии): границы даёт схема, шаг — роут.
+      // Кратность 30 — рукописная проверка в роуте: в JSON Schema есть
+      // multipleOf, но декоратора для него в TypeSpec нет — границы даёт
+      // схема, шаг — здесь. То же правило на клиенте — lib/duration.ts.
       if (req.body.duration_minutes % 30 !== 0) {
         res.status(400).json({ error: 'длительность должна быть кратна 30 минутам' });
         return;

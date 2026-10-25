@@ -106,12 +106,15 @@ describe('createMeetingTypesRepository', () => {
 
       // createDatabase доводит старую БД до v2: колонка появляется, легаси-строки
       // получают NOT NULL DEFAULT 30, новые идут с явной длительностью.
-      const migrated = createMeetingTypesRepository(createDatabase(dbPath));
+      const db = createDatabase(dbPath);
+      const migrated = createMeetingTypesRepository(db);
       expect(migrated.listAll()).toEqual([
         { id: '1', name: 'Легаси', description: '', duration_minutes: 30, active: true },
       ]);
       migrated.create({ name: 'Новый', description: '', duration_minutes: 90 });
       expect(migrated.listAll().map((type) => type.duration_minutes)).toEqual([30, 90]);
+      // Открытую БД не оставляем: удаление открытого файла на Windows падает.
+      db.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

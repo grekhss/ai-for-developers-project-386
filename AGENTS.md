@@ -492,6 +492,8 @@ calendar-of-meetings/
     │   ├── api-gen/        # сгенерированный клиентский SDK hey-api (не править)
     │   ├── date.ts         # APP_LOCALE, today, now, addDays, isWeekend, isPast, isBookable, formatDateRu
     │   ├── date.test.ts
+    │   ├── duration.ts     # длительность типа: DURATION_MIN/MAX/STEP, formatDurationRu, isValidDuration
+    │   ├── duration.test.ts
     │   ├── devRole.ts      # роль по URL для дев-обхода (AUTH_DISABLED); cookie ставит main.tsx
     │   ├── devRole.test.ts
     │   ├── window.ts       # гостевое окно Q5 (14 дней): WINDOW_DAYS, windowEnd, isBookableDay, isBookableSlot
@@ -566,8 +568,9 @@ onSelect={(date) => { setLastBooked(null); setTime(null); setSelectedDate(date);
 `createMeeting` гостевой флоу всегда прокидывает `meeting_type_id` (контракт
 намеренно допускает запись без типа для легаси, но F7-сценарий её не создаёт).
 `AdminView` (F6) держит только UI-состояние: активную вкладку, `opened` модалки
-и поля `name`/`description` формы — оба списка приходят из `useMeetingTypes` и
-`usePlannedMeetings`. Ошибка у двух хуков показывается одним `Alert`; когда
+и поля `name`/`description`/`duration` формы (границы, шаг и формат длительности
+— `lib/duration.ts`, не переизобретаются во вью) — оба списка приходят из
+`useMeetingTypes` и `usePlannedMeetings`. Ошибка у двух хуков показывается одним `Alert`; когда
 модалка открыта, он переезжает внутрь неё (`error && !modalOpen`), чтобы не
 двоилось.
 
