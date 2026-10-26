@@ -116,6 +116,41 @@ function localDate(offsetDays: number): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+/** Будний ли день — той же арифметикой, что booking-rules (тест выбирает даты). */
+function isWeekendDay(date: string): boolean {
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number];
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
+/**
+ * Будний день окна записи: от offsetDays (не раньше завтра — сегодня «время уже
+ * прошло» зависит от часа запуска) до первого буднего. В 14 днях всегда есть
+ * будни, поэтому бросок здесь — ошибка самого теста.
+ */
+function bookableDay(offsetDays: number): string {
+  for (let offset = Math.max(1, offsetDays); offset < 14; offset += 1) {
+    if (!isWeekendDay(localDate(offset))) return localDate(offset);
+  }
+  throw new Error('в окне записи нет будних дней');
+}
+
+/** Выходной в окне записи — для негативной проверки правила будней. */
+function weekendInWindow(offsetDays: number): string {
+  for (let offset = Math.max(1, offsetDays); offset < 14; offset += 1) {
+    if (isWeekendDay(localDate(offset))) return localDate(offset);
+  }
+  throw new Error('в окне записи нет выходных');
+}
+
+/** Будний день за окном записи — правило окна проверяется на нём, а не на выходном. */
+function weekdayBeyondWindow(): string {
+  for (let offset = 14; offset < 21; offset += 1) {
+    if (!isWeekendDay(localDate(offset))) return localDate(offset);
+  }
+  throw new Error('за окном записи нет будних дней');
+}
+
 /** POST /api/meeting-types: cookie опциональна — так проверяется 401 без сессии. */
 function postType(
   baseUrl: string,
@@ -290,7 +325,7 @@ describe('routes: дев-обход авторизации (AUTH_DISABLED)', () 
     const response = await fetch(`${baseUrl}/api/meetings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: '2026-03-02', time: '09:00' }),
+      body: JSON.stringify({ date: bookableDay(1), time: '09:00' }),
     });
     expect(response.status).toBe(201);
   });
@@ -603,20 +638,21 @@ describe('routes /api/meetings (за requireSession)', () => {
   it('POST принимает JSON и отвечает 201 с id строкой', async () => {
     const { baseUrl } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
+    const day = bookableDay(1);
     // Без meeting_type_id запись остаётся «нетипизированной» — как легаси-строки
     // (C5): поле в контракте опционально, обязательным его делает гостевой флоу.
-    const response = await postMeeting(baseUrl, guest, { date: '2026-03-02', time: '09:00' });
+    const response = await postMeeting(baseUrl, guest, { date: day, time: '09:00' });
     expect(response.status).toBe(201);
     const meeting = (await response.json()) as Record<string, unknown>;
     // Ровно поля контрактной Meeting: booker и meeting_type_id не эхом возвращаются.
-    expect(meeting).toEqual({ id: '1', date: '2026-03-02', time: '09:00' });
+    expect(meeting).toEqual({ id: '1', date: day, time: '09:00' });
     expect(typeof meeting.id).toBe('string');
   });
 
   it('POST дубля слота отвечает 409', async () => {
     const { baseUrl } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
-    const body = { date: '2026-03-02', time: '09:00' };
+    const body = { date: bookableDay(1), time: '09:00' };
 
     expect((await postMeeting(baseUrl, guest, body)).status).toBe(201);
     // Второй POST того же слота отклоняется сервером, а не UI; UNIQUE(date, time)
@@ -632,7 +668,7 @@ describe('routes /api/meetings (за requireSession)', () => {
     const response = await postMeeting(
       baseUrl,
       guest,
-      { date: '2026-03-02', time: '09:00' },
+      { date: bookableDay(1), time: '09:00' },
       { 'Content-Type': 'text/plain' },
     );
     expect(response.status).toBe(400);
@@ -666,15 +702,16 @@ describe('routes /api/meetings (за requireSession)', () => {
   it('POST берёт booker из сессии: поле booker в теле игнорируется (Q4/C10)', async () => {
     const { baseUrl, db } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
+    const day = bookableDay(1);
 
     const response = await postMeeting(baseUrl, guest, {
-      date: '2026-03-02',
+      date: day,
       time: '10:00',
       booker: 'Злоумышленник',
     });
     expect(response.status).toBe(201);
     // Ответ — только поля контрактной Meeting: тело booker не возвращается эхом.
-    expect(await response.json()).toEqual({ id: '1', date: '2026-03-02', time: '10:00' });
+    expect(await response.json()).toEqual({ id: '1', date: day, time: '10:00' });
 
     // Наблюдаемое — колонка: имя взято из подписанной cookie, а не из тела.
     const row = db.prepare('SELECT booker FROM meetings').get() as { booker: string };
@@ -686,7 +723,7 @@ describe('routes /api/meetings (за requireSession)', () => {
     // У админа bookerName null, а booker обязателен для записи (Q12c: админ
     // наблюдает, но не записывается) — в контракте нет 403, поэтому это 400.
     const response = await postMeeting(baseUrl, adminCookie, {
-      date: '2026-03-02',
+      date: bookableDay(1),
       time: '09:00',
     });
     expect(response.status).toBe(400);
@@ -699,7 +736,7 @@ describe('routes /api/meetings (за requireSession)', () => {
     // пара на границе ловит и сдвиг границы (100→101), и замену > на >=.
     const tooLong = await loginAsGuest(baseUrl, 'И'.repeat(101));
     const rejected = await postMeeting(baseUrl, tooLong, {
-      date: '2026-03-02',
+      date: bookableDay(1),
       time: '09:00',
     });
     expect(rejected.status).toBe(400);
@@ -709,7 +746,7 @@ describe('routes /api/meetings (за requireSession)', () => {
 
     const exactly100 = await loginAsGuest(baseUrl, 'И'.repeat(100));
     expect(
-      (await postMeeting(baseUrl, exactly100, { date: '2026-03-03', time: '09:00' })).status,
+      (await postMeeting(baseUrl, exactly100, { date: bookableDay(2), time: '09:00' })).status,
     ).toBe(201);
   });
 
@@ -722,7 +759,7 @@ describe('routes /api/meetings (за requireSession)', () => {
 
     for (const meetingTypeId of ['999', '2']) {
       const response = await postMeeting(baseUrl, guest, {
-        date: '2026-03-02',
+        date: bookableDay(1),
         time: '09:00',
         meeting_type_id: meetingTypeId,
       });
@@ -737,14 +774,15 @@ describe('routes /api/meetings (за requireSession)', () => {
     const { baseUrl, adminCookie, db } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
     await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    const day = bookableDay(1);
 
     const response = await postMeeting(baseUrl, guest, {
-      date: '2026-03-02',
+      date: day,
       time: '09:00',
       meeting_type_id: '1',
     });
     expect(response.status).toBe(201);
-    expect(await response.json()).toEqual({ id: '1', date: '2026-03-02', time: '09:00' });
+    expect(await response.json()).toEqual({ id: '1', date: day, time: '09:00' });
 
     // Колонка INTEGER: строковый id контракта хранится числом.
     const row = db.prepare('SELECT meeting_type_id FROM meetings').get() as {
@@ -753,29 +791,57 @@ describe('routes /api/meetings (за requireSession)', () => {
     expect(row.meeting_type_id).toBe(1);
   });
 
-  it('POST принимает выходные и даты вне гостевого окна — 201 (документация C1/T11)', async () => {
-    // Намеренное поведение: окно/выходные/прошлое — политика UI, а не сервера
-    // (C1). Тест фиксирует, что сервер НЕ начинает вдруг их проверять. Удалить
-    // вместе с тестом, если C1 пересмотрят в сторону общего shared/-модуля.
+  it('POST отклоняет прошедшую дату, выходной, дату вне окна и время вне сетки (ADR-0009)', async () => {
+    // Бывший тест-документация T11 утверждал обратное (сервер НЕ проверяет) —
+    // решение пересмотрено: правила букинга теперь на сервере (замечание ревью
+    // №2, ADR-0009 взамен ADR-0007).
     const { baseUrl, adminCookie } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
     await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
 
-    // Суббота — выходной (и прошедшая дата: тоже UI-политика)…
-    const weekend = await postMeeting(baseUrl, guest, {
-      date: '2026-03-07',
-      time: '10:00',
+    // Прошедшая дата — вчера.
+    const past = await postMeeting(baseUrl, guest, {
+      date: localDate(-1),
+      time: '09:00',
       meeting_type_id: '1',
     });
-    expect(weekend.status).toBe(201);
+    expect(past.status).toBe(400);
+    expect(await past.json()).toEqual({ error: 'дата прошла' });
 
-    // …а дата далеко за пределами окна сегодня…сегодня+13.
-    const outOfWindow = await postMeeting(baseUrl, guest, {
-      date: '2030-01-07',
+    // Выходной в пределах окна: суббота или воскресенье.
+    const weekend = await postMeeting(baseUrl, guest, {
+      date: weekendInWindow(1),
       time: '10:00',
       meeting_type_id: '1',
     });
-    expect(outOfWindow.status).toBe(201);
+    expect(weekend.status).toBe(400);
+    expect(await weekend.json()).toEqual({ error: 'выходной день — запись только на будни' });
+
+    // Дата за пределами окна (14 дней): будний день, чтобы правило окна
+    // проверилось именно им, а не закрылось раньше правилом выходных.
+    const outOfWindow = await postMeeting(baseUrl, guest, {
+      date: weekdayBeyondWindow(),
+      time: '10:00',
+      meeting_type_id: '1',
+    });
+    expect(outOfWindow.status).toBe(400);
+    expect(await outOfWindow.json()).toEqual({ error: 'дата вне окна записи (14 дней)' });
+
+    // Время вне сетки: до начала дня, после последнего слота и не кратно 30.
+    const day = bookableDay(1);
+    for (const time of ['08:30', '18:00', '10:15']) {
+      const response = await postMeeting(baseUrl, guest, { date: day, time, meeting_type_id: '1' });
+      expect(response.status, `time ${time}`).toBe(400);
+      expect(await response.json(), `time ${time}`).toEqual({
+        error: 'время вне сетки рабочего дня (09:00–18:00, шаг 30 минут)',
+      });
+    }
+
+    // Границы сетки включительно: первый слот 09:00 и последний 17:30 проходят.
+    for (const time of ['09:00', '17:30']) {
+      const response = await postMeeting(baseUrl, guest, { date: day, time, meeting_type_id: '1' });
+      expect(response.status, `time ${time}`).toBe(201);
+    }
   });
 
   it('GET без from/to отвечает 400', async () => {
@@ -801,14 +867,19 @@ describe('routes /api/meetings (за requireSession)', () => {
   it('GET фильтрует по диапазону и сортирует по (date, time)', async () => {
     const { baseUrl, adminCookie } = await createTestApp();
     const guest = await loginAsGuest(baseUrl);
-    await postMeeting(baseUrl, guest, { date: '2026-01-02', time: '10:00' });
-    await postMeeting(baseUrl, guest, { date: '2026-01-01', time: '11:00' });
-    await postMeeting(baseUrl, guest, { date: '2027-01-01', time: '09:00' });
+    // Три будних дня окна: нижняя граница диапазона, внутри него и за верхней.
+    const early = bookableDay(1);
+    const middle = bookableDay(2);
+    const late = bookableDay(3);
+    await postMeeting(baseUrl, guest, { date: middle, time: '10:00' });
+    await postMeeting(baseUrl, guest, { date: early, time: '11:00' });
+    await postMeeting(baseUrl, guest, { date: late, time: '09:00' });
 
-    const response = await getMeetings(baseUrl, adminCookie);
+    // Диапазон early…middle: поздняя запись не попадает, обе границы включительно.
+    const response = await getMeetings(baseUrl, adminCookie, `?from=${early}&to=${middle}`);
     expect(await response.json()).toEqual([
-      { id: '2', date: '2026-01-01', time: '11:00' },
-      { id: '1', date: '2026-01-02', time: '10:00' },
+      { id: '2', date: early, time: '11:00' },
+      { id: '1', date: middle, time: '10:00' },
     ]);
   });
 });
@@ -854,27 +925,28 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
     const { baseUrl, adminCookie, db } = await createTestApp();
     const guest = await loginAsGuest(baseUrl, 'Иван');
     await postType(baseUrl, adminCookie, { name: 'Консультация', description: '30 минут', duration_minutes: 30 });
+    const bookedDay = bookableDay(1);
 
-    // Завтрашняя типизированная запись — через реальный POST: booker придёт из
+    // Будущая типизированная запись — через реальный POST: booker придёт из
     // сессии, тип сохранится. Это и есть сквозной позитив T9 (login → POST с
     // активным типом → 201 → строка в админском join-DTO): статус и тело ответа
     // проверяются здесь, чтобы весь путь S2→S5→S4 был одним тестом.
     const created = await postMeeting(baseUrl, guest, {
-      date: localDate(1),
+      date: bookedDay,
       time: '09:00',
       meeting_type_id: '1',
     });
     expect(created.status).toBe(201);
-    expect(await created.json()).toEqual({ id: '1', date: localDate(1), time: '09:00' });
+    expect(await created.json()).toEqual({ id: '1', date: bookedDay, time: '09:00' });
     // Легаси-строки — только прямой вставкой: без типа и автора (C5) и в прошлом.
     db.prepare('INSERT INTO meetings (date, time) VALUES (?, ?)').run(localDate(0), '10:00');
     db.prepare('INSERT INTO meetings (date, time) VALUES (?, ?)').run(localDate(-1), '11:00');
 
-    // Сегодняшняя (type/booker null) и завтрашняя (join) — в порядке (date, time);
+    // Сегодняшняя (type/booker null) и записанная (join) — в порядке (date, time);
     // вчерашняя не попадает, хотя она в базе.
     expect(await (await getPlanned(baseUrl, adminCookie)).json()).toEqual([
       { date: localDate(0), time: '10:00', type: null, booker: null },
-      { date: localDate(1), time: '09:00', type: 'Консультация', booker: 'Иван' },
+      { date: bookedDay, time: '09:00', type: 'Консультация', booker: 'Иван' },
     ]);
   });
 });
@@ -891,9 +963,10 @@ describe('routes: жизненный цикл типа (T5/Q7)', () => {
     const { baseUrl, adminCookie } = await createTestApp();
     await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
     const guest = await loginAsGuest(baseUrl, 'Иван');
+    const bookedDay = bookableDay(1);
 
     const booked = await postMeeting(baseUrl, guest, {
-      date: localDate(1),
+      date: bookedDay,
       time: '09:00',
       meeting_type_id: '1',
     });
@@ -911,14 +984,15 @@ describe('routes: жизненный цикл типа (T5/Q7)', () => {
 
     // История не обезличивается: у записанной встречи тип остаётся названием…
     expect(await (await listPlanned(baseUrl, adminCookie)).json()).toEqual([
-      { date: localDate(1), time: '09:00', type: 'Консультация', booker: 'Иван' },
+      { date: bookedDay, time: '09:00', type: 'Консультация', booker: 'Иван' },
     ]);
 
     // …а новая запись на деактивированный тип не проходит (Q7), и гость тип
-    // больше не видит (listActive).
+    // больше не видит (listActive). День — тот же будний в окне: проверка
+    // закрывается именно типом, а не правилами букинга.
     const rebook = await postMeeting(baseUrl, guest, {
-      date: localDate(2),
-      time: '09:00',
+      date: bookedDay,
+      time: '10:00',
       meeting_type_id: '1',
     });
     expect(rebook.status).toBe(400);

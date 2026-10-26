@@ -1,5 +1,12 @@
 import express from 'express';
-import { today } from './date.js';
+import { now, today } from './date.js';
+import {
+  isAllowedTime,
+  isPastDay,
+  isSlotAlreadyStarted,
+  isWeekendDay,
+  windowEnd,
+} from './booking-rules.js';
 import { DuplicateMeetingError } from './repository.js';
 import type { AppOptions, AppRepositories } from './app.js';
 import { devSession, devSessionGate, requireRole, requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
@@ -113,9 +120,33 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
       return;
     }
 
-    // Целостность, а не домен (C1): названный тип обязан существовать и быть
+    // Доменные правила букинга (ADR-0009, замечание ревью №2): окно, прошедшие
+    // даты, выходные и сетка времени. «Сейчас» читает только роут (T3) и
+    // передаёт в чистые правила booking-rules.ts.
+    const moment = now();
+    if (isPastDay(req.body.date, moment)) {
+      res.status(400).json({ error: 'дата прошла' });
+      return;
+    }
+    if (isWeekendDay(req.body.date)) {
+      res.status(400).json({ error: 'выходной день — запись только на будни' });
+      return;
+    }
+    if (req.body.date > windowEnd(moment)) {
+      res.status(400).json({ error: 'дата вне окна записи (14 дней)' });
+      return;
+    }
+    if (!isAllowedTime(req.body.time)) {
+      res.status(400).json({ error: 'время вне сетки рабочего дня (09:00–18:00, шаг 30 минут)' });
+      return;
+    }
+    if (isSlotAlreadyStarted(req.body.date, req.body.time, moment)) {
+      res.status(400).json({ error: 'время уже прошло' });
+      return;
+    }
+
+    // Целостность, а не домен: названный тип обязан существовать и быть
     // активным — иначе запись ссылается на чужую или законченную сущность (Q7).
-    // Окно/выходные/прошлое здесь не проверяются — это политика UI (тест T11).
     const meetingTypeId = req.body.meeting_type_id;
     if (
       meetingTypeId !== undefined &&

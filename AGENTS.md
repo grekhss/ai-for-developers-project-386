@@ -272,12 +272,15 @@ Overflow answers, and your own priors. Verified against
 - **Источник истины — `contract/main.tsp`** (TypeSpec; K1/ADR-0004). `contract/openapi.yaml`,
   `src/lib/contract.gen.ts` и `server/contract.gen.ts` — **сгенерированные артефакты**:
   руками их не правят, правка идёт в `.tsp` и приезжает через `npm run contract`.
-- **Контракт описывает формат и схему, не домен (ADR-0007).** Прошедшие даты, выходные и сетка
-  слотов остаются фронтовой политикой; `server/validate.ts` валидирует формат по сгенерированным
-  схемам через `ajv` (булев предикат, K4) — руками остаётся то, что JSON Schema не выразит,
-  и живёт это в `routes.ts`: обёртка `req.body === undefined` (в Express 5 парсер может не
-  сработать), целостность `meeting_type_id` (существующий активный тип) и `booker` из
-  подписанной сессии, а не из тела (S5, Q4/C10). Русские тексты ошибок — тоже в роутах.
+- **Контракт описывает формат и схему, доменные правила букинга сервер тоже
+  проверяет (ADR-0009).** Формат валидации по сгенерированным схемам через
+  `ajv` (булев предикат, K4) — руками остаётся то, что JSON Schema не выразит,
+  и живёт это в `routes.ts`: обёртка `req.body === undefined` (в Express 5
+  парсер может не сработать), доменные правила `server/booking-rules.ts`
+  (окно 14 дней, прошедшие/выходные, сетка 09:00–18:00 шаг 30, уже начавшийся
+  сегодняшний слот) с «сейчас» из `server/date.ts`, целостность
+  `meeting_type_id` (существующий активный тип) и `booker` из подписанной
+  сессии, а не из тела (S5, Q4/C10). Русские тексты ошибок — тоже в роутах.
 - **Схемы в `contract/schema/` — артефакт той же компиляции, что и спека.** Эмиттер
   `@typespec/json-schema@~1.11.0` в `tspconfig.yaml` даёт один бандл (`bundleId`) в формате
   JSON Schema **draft 2020-12**, поэтому сервер собирает `ajv` из `ajv/dist/2020`. Две ловушки:
@@ -383,10 +386,15 @@ Overflow answers, and your own priors. Verified against
   re-deriving weekend/past rules. Only `today()`/`now()` in `lib/date.ts` read
   system time, and call sites pass their results in — so tests inject a fixed
   `'YYYY-MM-DD HH:mm'` string instead of using `vi.setSystemTime`.
-  `server/date.ts` holds the server's own `today()` (same convention, hand-rolled
-  local date — `src/` isn't importable from `server/`): `listPlanned` takes the
-  boundary as a `from` parameter, and only the route calls `today()`, so the
-  repository test injects a fixed date the same way.
+  `server/date.ts` holds the server's own `today()` and `now()` (same convention,
+  hand-rolled local date/time — `src/` isn't importable from `server/`): domain
+  booking rules live in `server/booking-rules.ts` as pure functions taking
+  `moment`, the route calls `now()` and checks them before integrity/type checks,
+  and only the route reads the clock. `server/date.ts` `today()` still feeds
+  admin listing; `listPlanned` takes the boundary as a `from` parameter, and
+  only the route calls `today()`, so the repository test injects a fixed date
+  the same way. `server/booking-rules.ts` is duplicated from `src/lib/window.ts`/
+  `src/lib/slots.ts` by design (ADR-0009), not via `shared/`.
 - **`strict` is on** in `tsconfig.app.json` (enabled 2026-10-03, so don't assume
   the stock Vite template's laxer defaults). Nullable date/time state — the bulk
   of this app — is checked, so expect `string | null` to be narrowed explicitly
