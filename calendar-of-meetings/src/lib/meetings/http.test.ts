@@ -76,12 +76,12 @@ describe('createHttpMeetingsApi', () => {
       return jsonResponse(201, { id: '2', date: '2026-01-02', time: '10:00' });
     });
 
-    const meeting = await createHttpMeetingsApi().create({ date: '2026-01-02', time: '10:00' });
+    const meeting = await createHttpMeetingsApi().create({ date: '2026-01-02', time: '10:00', booker_name: 'Тест' });
 
     // Регрессия: без заголовка каждый POST вернул бы 400 от express.json().
     expect(captured?.method).toBe('POST');
     expect(captured?.headers.get('Content-Type')).toBe('application/json');
-    expect(await captured?.text()).toBe(JSON.stringify({ date: '2026-01-02', time: '10:00' }));
+    expect(await captured?.text()).toBe(JSON.stringify({ date: '2026-01-02', time: '10:00', booker_name: 'Тест' }));
     expect(meeting).toEqual({ id: '2', date: '2026-01-02', time: '10:00' });
   });
 
@@ -96,10 +96,11 @@ describe('createHttpMeetingsApi', () => {
       date: '2026-01-02',
       time: '10:00',
       meeting_type_id: '7',
+      booker_name: 'Тест',
     });
 
     expect(await captured?.text()).toBe(
-      JSON.stringify({ date: '2026-01-02', time: '10:00', meeting_type_id: '7' })
+      JSON.stringify({ date: '2026-01-02', time: '10:00', meeting_type_id: '7', booker_name: 'Тест' })
     );
   });
 
@@ -116,7 +117,7 @@ describe('createHttpMeetingsApi', () => {
 
     const api = createHttpMeetingsApi();
     await api.list({ from: '2026-01-01', to: '2026-01-02' });
-    await api.create({ date: '2026-01-02', time: '10:00', meeting_type_id: '7' });
+    await api.create({ date: '2026-01-02', time: '10:00', meeting_type_id: '7', booker_name: 'Тест' });
 
     expect(captured.map((request) => request.credentials)).toEqual(['include', 'include']);
   });
@@ -129,7 +130,7 @@ describe('createHttpMeetingsApi', () => {
 
       // Сообщение, а не просто «бросает»: иначе тест проходит и на постороннем
       // исключении — так и было поймано, пока URL не чинился.
-      await expect(api.create({ date: '2026-01-02', time: '10:00' })).rejects.toThrow(
+      await expect(api.create({ date: '2026-01-02', time: '10:00', booker_name: 'Тест' })).rejects.toThrow(
         `POST /api/meetings вернул ${status}`,
       );
     }

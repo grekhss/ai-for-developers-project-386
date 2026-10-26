@@ -13,63 +13,9 @@ export interface paths {
         };
         /**
          * @description Все запланированные встречи одним списком: сегодня и будущее, по возрастанию
-         *     (date, time), без 14-дневного горизонта. Только админ (C5). (S4)
+         *     (date, time), без 14-дневного горизонта. Только админ.
          */
         get: operations["listPlannedMeetings"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * @description Вход. Роль определяется только по паролю; для гостя обязателен непустой
-         *     bookerName (400), неверный пароль — 401. В ответ выставляется cookie `session`.
-         */
-        post: operations["login"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/logout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Выход: сессионная cookie очищается, тела нет. Без сессии — 401. */
-        post: operations["logout"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать её не может. */
-        get: operations["getCurrentSession"];
         put?: never;
         post?: never;
         delete?: never;
@@ -85,10 +31,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Список типов встреч. Гость видит только активные, админ — все (Q2/Q7). (S3) */
+        /** @description Список типов встреч. Гость видит только активные, админ — все (Q2/Q7). */
         get: operations["listMeetingTypes"];
         put?: never;
-        /** @description Создание типа встречи. Только админ. (S3) */
+        /** @description Создание типа встречи. Только админ. */
         post: operations["createMeetingType"];
         delete?: never;
         options?: never;
@@ -105,7 +51,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Деактивация типа; удаления нет (Q7). Только админ. (S3) */
+        /** @description Деактивация типа; удаления нет (Q7). Только админ. */
         post: operations["deactivateMeetingType"];
         delete?: never;
         options?: never;
@@ -125,13 +71,10 @@ export interface paths {
         put?: never;
         /**
          * @description Создание записи. Формат — 400; занятый слот — 409 (UNIQUE(date, time) в базе).
-         *     Выбор несуществующего/деактивированного типа — тоже 400 (S5, C1).
-         *     Доменные правила букинга проверяет сервер (ADR-0009): прошедшая дата,
-         *     выходной, день вне окна 14 дней, время вне сетки 09:00–18:00 с шагом 30
-         *     и уже начавшийся сегодняшний слот — каждый отдельным 400. `booker` берётся
-         *     из подписанной сессионной cookie, никогда из тела (Q4): поле `booker` в теле
-         *     игнорируется (C10), а его отсутствие в сессии (админ) или длина больше 100
-         *     символов — 400. Возвращает запись с присвоенным id.
+         *     Выбор несуществующего/деактивированного типа — тоже 400. Домен — 400
+         *     (прошедшее/выходное/вне окна/сетка/уже начавшийся слот) по ADR-0009.
+         *     `booker_name` берётся из тела и обязателен; роль определяется по cookie `role`.
+         *     Возвращает запись с присвоенным id.
          */
         post: operations["createMeeting"];
         delete?: never;
@@ -155,21 +98,19 @@ export interface components {
         ErrorResponse: {
             error: string;
         };
-        /** @description Данные входа: пароль обязателен, имя гостя — опционально. */
-        LoginInput: {
-            /**
-             * @description Пароль — непустая строка, минимум один непробельный символ: `'   '` не
-             *     проходит, хотя с одним лишь `@minLength(1)` прошло бы.
-             */
-            password: string;
-            /** @description Имя гостя: для гостя обязательно (непустая строка), для админа игнорируется. */
-            bookerName?: string;
-        };
         /**
-         * @description Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
-         *     Mantine: 'YYYY-MM-DD' и 'HH:mm'. Строки, а не Date, ещё и потому, что
-         *     new Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных
-         *     часовых поясах показывает предыдущий день.
+         * @description Записи на встречи.
+         *
+         *     Роль определяется по cookie `role`: `/admin` → `admin`, остальное → `guest`
+         *     (клиент ставит её по URL; сервер не проверяет пароли и не выдает сессий).
+         *     Админские ручки требуют роль `admin` (иначе 403).
+         *
+         *     Доменные правила букинга — окно 14 дней, прошедшие даты, выходные, сетка
+         *     времени — сервер проверяет (ADR-0009, server/booking-rules.ts). Формат
+         *     проверяется по сгенерированным схемам через `ajv` (K4); целостность —
+         *     несуществующий или деактивированный тип, корректное имя записавшегося из тела
+         *     (S5/C1). Русские тексты ошибок — в `server/routes.ts`.Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
+         *     Mantine: 'YYYY-MM-DD' и 'HH:mm'.
          */
         Meeting: {
             /** @description Идентификатор, присваиваемый базой данных. */
@@ -179,18 +120,23 @@ export interface components {
             /** @description Начало встречи, 'HH:mm'. */
             time: string;
         };
-        /** @description Данные новой записи — всё, кроме идентификатора; booker сюда не входит. */
+        /**
+         * @description Данные новой записи — всё, кроме идентификатора.
+         *     Имя записавшегося `booker_name` передаётся из формы (не из сессии).
+         */
         MeetingDraft: {
             /** @description День встречи, 'YYYY-MM-DD'. */
             date: string;
             /** @description Начало встречи, 'HH:mm'. */
             time: string;
             /**
+             * @description Имя записавшегося: непустая строка без пробельных только из пробелов,
+             *     не длиннее 100 символов.
+             */
+            booker_name: string;
+            /**
              * @description Тип встречи. Если поле передано — тип обязан существовать и быть активным,
-             *     иначе 400 (S5, C1); без поля запись создаётся «нетипизированной», как
-             *     легаси-строки C5 (гостевой флоу F7 всегда передаёт тип). Формат — строка:
-             *     не-строка отклоняется схемой как 400, а несуществующая строка — проверкой
-             *     целостности в роуте.
+             *     иначе 400; без поля запись создаётся «нетипизированной».
              */
             meeting_type_id?: string;
         };
@@ -208,11 +154,8 @@ export interface components {
             /**
              * Format: int32
              * @description Длительность встречи этого типа в минутах: 30–180, кратно 30. Кратность
-             *     тридцати проверяет роут: декоратора для неё в TypeSpec нет (в JSON Schema
-             *     есть multipleOf, но эмиттер его не породит) — границы дают minValue и
-             *     maxValue. Информационное поле: сетку слотов и занятость оно не меняет
-             *     (слот общий, ADR-0008; влияние длительности на занятость — путь роста,
-             *     не v1).
+             *     тридцати проверяет роут; информационное поле: сетку слотов и занятость
+             *     оно не меняет (ADR-0008).
              */
             duration_minutes: number;
             /** @description Активен ли тип: деактивированный нельзя выбрать при новой записи (Q7). */
@@ -220,21 +163,17 @@ export interface components {
         };
         /** @description Данные нового типа встречи — всё, кроме идентификатора и признака активности. */
         MeetingTypeDraft: {
-            /**
-             * @description Название типа — непустая строка, минимум один непробельный символ: `'   '`
-             *     не проходит, хотя с одним лишь `@minLength(1)` прошло бы (тот же приём,
-             *     что у `LoginInput.password`, K4).
-             */
+            /** @description Название типа — непустая строка, минимум один непробельный символ. */
             name: string;
             /** @description Описание типа. */
             description: string;
             /**
              * Format: int32
-             * @description Длительность встреч этого типа в минутах: те же границы и кратность, что
-             *     у MeetingType.duration_minutes (кратность — в роуте, как при чтении).
+             * @description Длительность встреч этого типа в минутах: 30–180, кратно 30.
              */
             duration_minutes: number;
         };
+        NoContent: Record<string, never>;
         /**
          * @description Строка админского списка запланированных встреч: LEFT JOIN, поэтому у старых
          *     «нетипизированных» записей `type` и `booker` равны null (C5).
@@ -248,13 +187,6 @@ export interface components {
             type: string | null;
             /** @description Имя записавшегося; null у старой записи без booker. */
             booker: string | null;
-        };
-        /** @description Сессия — то, что подписано в httpOnly-cookie `session` и определяет доступ. */
-        Session: {
-            /** @enum {string} */
-            role: "admin" | "guest";
-            /** @description Имя записывающегося; у админа его нет. */
-            bookerName: string | null;
         };
     };
     responses: never;
@@ -283,115 +215,8 @@ export interface operations {
                     "application/json": components["schemas"]["PlannedMeeting"][];
                 };
             };
-            /** @description Access is unauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Нет прав: сессия есть, но роль не admin (T2). */
+            /** @description Нет прав: роль не admin (ADR-0010). */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    login: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LoginInput"];
-            };
-        };
-        responses: {
-            /** @description The request has succeeded. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Session"];
-                };
-            };
-            /** @description The server could not understand the request due to invalid syntax. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Access is unauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    logout: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description There is no content to send for this request, but the headers may be useful. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Access is unauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getCurrentSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The request has succeeded. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Session"];
-                };
-            };
-            /** @description Access is unauthorized. */
-            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -417,15 +242,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeetingType"][];
-                };
-            };
-            /** @description Access is unauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -461,16 +277,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Access is unauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Нет прав: сессия есть, но роль не admin (T2). */
+            /** @description Нет прав: роль не admin (ADR-0010). */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -510,16 +317,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Access is unauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Нет прав: сессия есть, но роль не admin (T2). */
+            /** @description Нет прав: роль не admin (ADR-0010). */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -562,15 +360,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Access is unauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
         };
     };
     createMeeting: {
@@ -597,15 +386,6 @@ export interface operations {
             };
             /** @description The server could not understand the request due to invalid syntax. */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Access is unauthorized. */
-            401: {
                 headers: {
                     [name: string]: unknown;
                 };

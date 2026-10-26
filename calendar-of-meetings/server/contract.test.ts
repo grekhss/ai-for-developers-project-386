@@ -26,14 +26,9 @@ const serverGen = read('./contract.gen.ts');
 const toOpenApiPath = (path: string): string => path.replace(/:([^/]+)/g, '{$1}');
 
 /**
- * Все ручки API — их набор живёт в contract/main.tsp. listPlannedMeetings (S4)
- * описана там заранее и смонтирована в S4: контракт шёл впереди сервера, чтобы
- * SDK (K3) собрал её до реализации.
+ * Все ручки API.
  */
 const OPERATIONS = [
-  'login',
-  'logout',
-  'getCurrentSession',
   'listMeetings',
   'createMeeting',
   'listMeetingTypes',
@@ -42,32 +37,22 @@ const OPERATIONS = [
   'listPlannedMeetings',
 ] as const;
 
-/** Все пути спеки, включая планируемые. */
+/** Все пути спеки. */
 const PATHS = [
-  '/api/login:',
-  '/api/logout:',
-  '/api/me:',
   '/api/meetings:',
   '/api/meeting-types:',
   '/api/meeting-types/{id}/deactivate:',
   '/api/admin/meetings:',
 ] as const;
 
-/**
- * Обязательные статус-коды операции: ровно то, что возвращает сервер, включая
- * отказ в доступе (401 без сессии, 403 если роль не admin) и целостность
- * (400 формата, 409 занятый слот). Источник истины — contract/main.tsp.
- */
+/** Обязательные статус-коды операции. */
 const REQUIRED_CODES: Record<(typeof OPERATIONS)[number], readonly string[]> = {
-  login: ['200', '400', '401'],
-  logout: ['204', '401'],
-  getCurrentSession: ['200', '401'],
-  listMeetings: ['200', '400', '401'],
-  createMeeting: ['201', '400', '401', '409'],
-  listMeetingTypes: ['200', '401'],
-  createMeetingType: ['201', '400', '401', '403'],
-  deactivateMeetingType: ['200', '400', '401', '403'],
-  listPlannedMeetings: ['200', '401', '403'],
+  listMeetings: ['200', '400'],
+  createMeeting: ['201', '400', '409'],
+  listMeetingTypes: ['200'],
+  createMeetingType: ['201', '400', '403'],
+  deactivateMeetingType: ['200', '400', '403'],
+  listPlannedMeetings: ['200', '403'],
 };
 
 /**
@@ -107,46 +92,32 @@ type OpenApiDocument = {
  */
 type MountedRoute = { path: string; method: string };
 
-function inspectRoutes(): { routes: MountedRoute[]; unguardedRoutes: MountedRoute[] } {
+function inspectRoutes(): { routes: MountedRoute[] } {
   const db = createDatabase(':memory:');
   try {
-    const router = createRoutes(
-      {
-        meetings: createRepository(db),
-        meetingTypes: createMeetingTypesRepository(db),
-      },
-      {
-        adminPassword: 'admin-secret',
-        guestPassword: 'guest-secret',
-        secureCookie: false,
-      },
-    );
+    const router = createRoutes({
+      meetings: createRepository(db),
+      meetingTypes: createMeetingTypesRepository(db),
+    });
 
     const routes: MountedRoute[] = [];
-    const unguardedRoutes: MountedRoute[] = [];
-    let guarded = false;
 
     for (const layer of router.stack as Array<{
       name: string;
       route?: { path: string; methods: Record<string, boolean> };
     }>) {
-      // Порядок слоёв решает: router.use('/api', requireSession) защищает только
-      // то, что смонтировано ПОСЛЕ него, — раньше лежит открытый /api/login.
       if (layer.route === undefined) {
-        guarded = true;
         continue;
       }
 
       const path = toOpenApiPath(layer.route.path);
       for (const [method, enabled] of Object.entries(layer.route.methods)) {
         if (!enabled || method === 'all' || method === '_all') continue;
-        const route = { path, method };
-        routes.push(route);
-        if (!guarded) unguardedRoutes.push(route);
+        routes.push({ path, method });
       }
     }
 
-    return { routes, unguardedRoutes };
+    return { routes };
   } finally {
     db.close();
   }
@@ -199,8 +170,8 @@ describe('артефакты контракта API', () => {
     const documented = specRoutes(document);
     const { routes } = inspectRoutes();
 
-    // Спека может идти впереди сервера (S4), поэтому проверяем только
-    // подмножество: роут есть — он обязан быть в спеке. Обратное неверно.
+    // Спека может идти впереди сервера, поэтому проверяем только подмножество:
+    // роут есть — он обязан быть в спеке.
     expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) {
       expect(
@@ -217,8 +188,6 @@ describe('артефакты контракта API', () => {
 
     for (const { path, method } of specRoutes(document)) {
       if (!mountedPaths.has(path)) continue;
-      // Для смонтированного пути в спеке допустимы только методы, которые сервер
-      // реально отдаёт: лишний метод в спеке — это ложь о реализованном роуте.
       expect(
         routes,
         `спека документирует ${method.toUpperCase()} ${path}, но сервер его не монтирует`,
@@ -226,20 +195,14 @@ describe('артефакты контракта API', () => {
     }
   });
 
-  it('сеанс-гейт навешен на все ручки, кроме входа', () => {
-    const { unguardedRoutes } = inspectRoutes();
-    // Порядок в router.stack решает: что смонтировано до use-слоя с
-    // requireSession, работает без сессии. Вход — единственный такой роут.
-    // Убери гейт — и без сессии окажется всё API, тест рухнет на этом диффе.
-    expect(unguardedRoutes).toEqual([{ path: '/api/login', method: 'post' }]);
+  it('все ручки открыты по аутентификации (роль — по cookie)', () => {
+    const { routes } = inspectRoutes();
+    // Ролей проверяет requireRole на админских ручках; универсальной сеанс-гейт нет.
+    expect(routes.some((route) => route.path === '/api/meetings' && route.method === 'post')).toBe(true);
   });
 
-  it('ручки удаления нет: деактивация — единственный конец жизненного цикла (Q7/T5)', () => {
+  it('ручки удаления нет: деактивация — единственный конец жизненного цикла (Q7)', () => {
     const { routes } = inspectRoutes();
-    // В контракте DELETE не описан, а роуты ⊆ спеки (тест выше). Отдельная
-    // проверка нужна как явный контракт жизненного цикла: если кто-то смонтирует
-    // DELETE (в заботе о ретеншене), падать должно здесь, а не только на диффе
-    // со спекой — «деактивация вместо удаления» и есть решения Q7.
     expect(routes.filter((route) => route.method === 'delete')).toEqual([]);
   });
 });

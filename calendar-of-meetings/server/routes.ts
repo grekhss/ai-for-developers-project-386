@@ -8,121 +8,47 @@ import {
   windowEnd,
 } from './booking-rules.js';
 import { DuplicateMeetingError } from './repository.js';
-import type { AppOptions, AppRepositories } from './app.js';
-import { devSession, devSessionGate, requireRole, requireSession, SESSION_COOKIE, sessionCookieOptions, type Session } from './session.js';
-import type { CreateMeetingBody, CreateMeetingTypeBody, ListMeetingsQuery, LoginInput } from './types.js';
-import { isValidDraft, isValidLogin, isValidMeetingTypeDraft, isValidRange } from './validate.js';
+import { requireRole } from './role.js';
+import { isValidDraft, isValidMeetingTypeDraft, isValidRange } from './validate.js';
+import type { AppRepositories } from './app.js';
 
-type AuthOptions = Pick<AppOptions, 'adminPassword' | 'guestPassword' | 'secureCookie' | 'authDisabled'>;
+export interface RoutesDependencies extends AppRepositories {}
 
-/**
- * Тело и query обработчиков берутся из operations контракта, а не из выражения:
- * смена shape'а в contract/main.tsp роняет `tsc` здесь, а не вылезает в 400.
- * Типы — обещание для компилятора, фактическую проверку делают isValid*-предикаты
- * ниже: в Express 5 req.body может и не быть (парсер не сработал), поэтому без
- * них строка с типом врала бы о рантайме.
- *
- * Параметры путей есть только у деактивации типа (`:id`); остальные ручки
- * статичны. ResBody остаётся unknown: ответы различаются по статус-коду
- * (200/201/204 против 400/401/403/409), и свести их в одну типизированную сумму
- * дороже, чем она стоит.
- */
-type NoParams = Record<string, string>;
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
 
 /**
- * Верхняя граница имени записавшегося (C10): без неё в базу лег бы сколь угодно
- * длинный `booker` из сессии. Проверка живёт здесь, а не в JSON Schema — значение
- * приходит из подписанной cookie, а не из тела (Q4), и схема его не видит.
- * Граница включительна: 100 символов проходит, 101 — нет (см. парный тест).
+ * Роуты API. Роли — из cookie `role` (см. server/role.ts); сессий нет.
+ * Доменные правила букинга и целостность — в этом слое (S5/C1).
  */
-const MAX_BOOKER_LENGTH = 100;
-
-/** Роуты API. Фабрика: принимает репозитории, чтобы тесты подавали ':memory:'. */
-export function createRoutes(repos: AppRepositories, auth: AuthOptions): express.Router {
+export function createRoutes(repos: RoutesDependencies) {
   const router = express.Router();
-  const cookie = { ...sessionCookieOptions(), secure: auth.secureCookie };
+  const { meetings, meetingTypes } = repos;
 
-  router.post<NoParams, unknown, LoginInput>('/api/login', (req, res) => {
-    // Дев-обход (AUTH_DISABLED): пароль не проверяем — роль уже известна из
-    // URL (cookie dev_role, server/session.ts). Вход нужен лишь затем, чтобы
-    // экран входа после «Выйти» не оказался тупиком.
-    if (auth.authDisabled) {
-      const session = devSession(req);
-      res.cookie(SESSION_COOKIE, JSON.stringify(session), cookie);
-      res.json(session);
-      return;
-    }
-
-    if (!isValidLogin(req.body)) {
-      res.status(400).json({ error: 'password обязателен, bookerName — непустая строка' });
-      return;
-    }
-
-    // Роль определяется только здесь, по совпадению пароля, — с клиента её не берём.
-    // Пароли разные (проверено в createApp), так что порядок сравнения не влияет.
-    let session: Session;
-    if (req.body.password === auth.adminPassword) {
-      session = { role: 'admin', bookerName: null };
-    } else if (req.body.password === auth.guestPassword) {
-      const bookerName = req.body.bookerName?.trim();
-      if (!bookerName) {
-        res.status(400).json({ error: 'для гостя обязателен bookerName' });
-        return;
-      }
-      session = { role: 'guest', bookerName };
-    } else {
-      res.status(401).json({ error: 'неверный пароль' });
-      return;
-    }
-
-    res.cookie(SESSION_COOKIE, JSON.stringify(session), cookie);
-    res.json(session);
-  });
-
-  // Дальше все /api — только с сессией: гейт ставится до роутов meetings и
-  // meeting-types. В дев-обходе вместо requireSession — devSessionGate (роль из
-  // URL, 401 не бывает). Админ-ручки ниже всё равно берут requireRole.
-  router.use('/api', auth.authDisabled ? devSessionGate : requireSession);
-
-  // Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать
-  // её не может (C9). Сессия уже распарсена requireSession'ом.
-  router.get('/api/me', (req, res) => {
-    res.json(req.session);
-  });
-
-  // clearCookie с теми же опциями, что и выдача, — иначе path/secure не совпадут
-  // и cookie не удалится (Q13). Подпись для очистки не нужна: удаляется cookie
-  // по имени, а не по значению, поэтому signed убираем — иначе уйдёт подписанный
-  // мусор вместо пустой cookie.
-  router.post('/api/logout', (_req, res) => {
-    const { signed: _signed, ...clearOptions } = cookie;
-    res.clearCookie(SESSION_COOKIE, clearOptions);
-    res.status(204).end();
-  });
-
-  router.get<NoParams, unknown, never, ListMeetingsQuery>('/api/meetings', (req, res) => {
-    // req.query типизирован как ListMeetingsQuery по контракту, но рантайм это
-    // всё ещё строки из URL: повторённый параметр приходит массивом, поэтому
-    // предикат обязателен — он и роняет формат, и сужает для repo.list.
+  // Доступ к записям: открыт для ролей по cookie.
+  router.get('/meetings', (req, res) => {
     if (!isValidRange(req.query)) {
-      // Без этой проверки better-sqlite3 упал бы с 500 «too few parameter values».
-      res.status(400).json({ error: 'from и to обязательны, формат YYYY-MM-DD' });
+      res.status(400).json({ error: 'параметры запроса from и to обязательны в формате YYYY-MM-DD' });
       return;
     }
-    res.json(repos.meetings.list(req.query.from, req.query.to));
+    const { from, to } = req.query as { from: string; to: string };
+    const list = meetings.list(from, to);
+    res.json({ meetings: list });
   });
 
-  router.post<NoParams, unknown, CreateMeetingBody>('/api/meetings', (req, res) => {
+  router.post('/meetings', (req, res) => {
+    if (!isObject(req.body)) {
+      res.status(400).json({ error: 'тело запроса должно быть JSON-объектом' });
+      return;
+    }
     if (!isValidDraft(req.body)) {
       res.status(400).json({
-        error: 'date и time обязательны, формат time HH:mm; meeting_type_id — строка, если передан',
+        error: 'date и time обязательны, формат time HH:mm; booker_name — непустая строка до 100 символов без одних пробелов; meeting_type_id — строка, если передан',
       });
       return;
     }
 
-    // Доменные правила букинга (ADR-0009, замечание ревью №2): окно, прошедшие
-    // даты, выходные и сетка времени. «Сейчас» читает только роут (T3) и
-    // передаёт в чистые правила booking-rules.ts.
     const moment = now();
     if (isPastDay(req.body.date, moment)) {
       res.status(400).json({ error: 'дата прошла' });
@@ -145,106 +71,103 @@ export function createRoutes(repos: AppRepositories, auth: AuthOptions): express
       return;
     }
 
-    // Целостность, а не домен: названный тип обязан существовать и быть
-    // активным — иначе запись ссылается на чужую или законченную сущность (Q7).
     const meetingTypeId = req.body.meeting_type_id;
-    if (
-      meetingTypeId !== undefined &&
-      !repos.meetingTypes.listActive().some((type) => type.id === meetingTypeId)
-    ) {
-      res.status(400).json({ error: 'тип встречи не найден или неактивен' });
-      return;
+    if (meetingTypeId !== undefined) {
+      if (typeof meetingTypeId !== 'string') {
+        res.status(400).json({ error: 'meeting_type_id — строка, если передан' });
+        return;
+      }
+      const all = meetingTypes.listAll();
+      const meetingType = all.find((m) => m.id === meetingTypeId);
+      if (!meetingType || !meetingType.active) {
+        res.status(400).json({ error: 'тип встречи не найден или неактивен' });
+        return;
+      }
     }
 
-    // booker — только из подписанной сессии, никогда из тела (Q4/C10): поле
-    // booker в req.body игнорируется. У админа bookerName null — он не
-    // записывается (Q12c), а в контракте для этой ручки нет 403, поэтому 400.
-    const booker = req.session?.bookerName;
-    if (!booker) {
+    const booker = req.body.booker_name.trim();
+    if (booker === '') {
       res.status(400).json({ error: 'имя записавшегося обязательно' });
       return;
     }
-    if (booker.length > MAX_BOOKER_LENGTH) {
-      res.status(400).json({ error: `имя записавшегося длиннее ${MAX_BOOKER_LENGTH} символов` });
+    if (booker.length > 100) {
+      res.status(400).json({ error: 'имя записавшегося длиннее 100 символов' });
       return;
     }
 
     try {
-      res.status(201).json(repos.meetings.create(req.body, booker));
+      const created = meetings.create(
+        {
+          date: req.body.date,
+          time: req.body.time,
+          meeting_type_id: meetingTypeId,
+          booker_name: booker,
+        },
+        booker,
+      );
+      res.status(201).json({ meeting: created });
     } catch (error) {
       if (error instanceof DuplicateMeetingError) {
-        res.status(409).json({ error: 'слот уже занят' });
+        res.status(409).json({ error: 'этот слот уже занят' });
         return;
       }
-      // Прочие ошибки отдаёт стандартный обработчик Express — 500.
       throw error;
     }
   });
 
-  // ===== Типы встреч (S3): ручки стоят ПОСЛЕ requireSession — иначе гейт их
-  // не накрывает, и contract.test.ts упадёт на «сеанс-гейт на всех ручках».
-
-  // Список без 403 по контракту (listMeetingTypes: 200 | 401): обе роли видят
-  // список, различается только содержимое — админу все, гостю только активные
-  // (Q2/Q7). Фильтр — по роли из подписанной cookie, которую клиент не подделал.
-  router.get('/api/meeting-types', (req, res) => {
-    const types =
-      req.session?.role === 'admin'
-        ? repos.meetingTypes.listAll()
-        : repos.meetingTypes.listActive();
-    res.json(types);
+  // Типы встреч
+  router.get('/meeting-types', (_req, res) => {
+    const types = meetingTypes.listActive();
+    res.json({ meetingTypes: types });
   });
 
-  router.post<NoParams, unknown, CreateMeetingTypeBody>(
-    '/api/meeting-types',
-    requireRole('admin'),
-    (req, res) => {
-      if (!isValidMeetingTypeDraft(req.body)) {
-        res.status(400).json({
-          error:
-            'name обязателен (непустая строка), description — строка, duration_minutes — целое от 30 до 180',
-        });
-        return;
-      }
-      // Кратность 30 — рукописная проверка в роуте: в JSON Schema есть
-      // multipleOf, но декоратора для него в TypeSpec нет — границы даёт
-      // схема, шаг — здесь. То же правило на клиенте — lib/duration.ts.
-      if (req.body.duration_minutes % 30 !== 0) {
-        res.status(400).json({ error: 'длительность должна быть кратна 30 минутам' });
-        return;
-      }
-      // Храним обрезанное имя — как bookerName при логине. @pattern("\\S") в
-      // контракте гарантирует, что после обрезки не останется пустой строки.
-      res.status(201).json(
-        repos.meetingTypes.create({
-          name: req.body.name.trim(),
-          description: req.body.description,
-          duration_minutes: req.body.duration_minutes,
-        }),
-      );
-    },
-  );
+  router.post('/meeting-types', requireRole('admin'), (req, res) => {
+    if (!isObject(req.body)) {
+      res.status(400).json({ error: 'тело запроса должно быть JSON-объектом' });
+      return;
+    }
+    if (!isValidMeetingTypeDraft(req.body)) {
+      res.status(400).json({
+        error: 'name — непустая строка с минимум одним непробельным символом; description — строка; duration_minutes — целое 30–180',
+      });
+      return;
+    }
+    const duration = Number(req.body.duration_minutes);
+    if (!Number.isInteger(duration) || duration < 30 || duration > 180 || duration % 30 !== 0) {
+      res.status(400).json({ error: 'duration_minutes — кратно 30, от 30 до 180 минут' });
+      return;
+    }
+    const name = String(req.body.name).trim();
+    if (name === '') {
+      res.status(400).json({ error: 'name — непустая строка с минимум одним непробельным символом' });
+      return;
+    }
+    const created = meetingTypes.create({
+      name,
+      description: String(req.body.description ?? ''),
+      duration_minutes: duration,
+    });
+    res.status(201).json({ meetingType: created });
+  });
 
-  router.post<{ id: string }>(
-    '/api/meeting-types/:id/deactivate',
-    requireRole('admin'),
-    (req, res) => {
-      const deactivated = repos.meetingTypes.deactivate(req.params.id);
-      if (!deactivated) {
-        // В контракте нет 404 — только 400, поэтому неизвестный id — 400.
-        res.status(400).json({ error: 'тип встречи не найден' });
-        return;
-      }
-      // Повторная деактивация идемпотентна: 200 с текущим состоянием (Q7).
-      res.json(deactivated);
-    },
-  );
+  router.post('/meeting-types/:id/deactivate', requireRole('admin'), (req, res) => {
+    const id = String(req.params.id ?? '');
+    if (!/^\d+$/.test(id)) {
+      res.status(400).json({ error: 'id должен быть числом' });
+      return;
+    }
+    const meetingType = meetingTypes.deactivate(id);
+    if (!meetingType) {
+      res.status(400).json({ error: 'тип встречи не найден' });
+      return;
+    }
+    res.json({ meetingType });
+  });
 
-  // ===== Админский список запланированных встреч (S4): только admin (403
-  // остальным). Границу «сегодня и позже» даёт today(), не окно Q5 (C5/Q6);
-  // сортировка и LEFT JOIN — в репозитории.
-  router.get('/api/admin/meetings', requireRole('admin'), (_req, res) => {
-    res.json(repos.meetings.listPlanned(today()));
+  // Админский список запланированных встреч
+  router.get('/admin/meetings', requireRole('admin'), (_req, res) => {
+    const meetingsList = meetings.listPlanned(today());
+    res.json({ meetings: meetingsList });
   });
 
   return router;

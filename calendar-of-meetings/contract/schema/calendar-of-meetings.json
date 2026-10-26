@@ -2,62 +2,6 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "calendar-of-meetings",
     "$defs": {
-        "Session": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "Session.json",
-            "type": "object",
-            "properties": {
-                "role": {
-                    "anyOf": [
-                        {
-                            "type": "string",
-                            "const": "admin"
-                        },
-                        {
-                            "type": "string",
-                            "const": "guest"
-                        }
-                    ]
-                },
-                "bookerName": {
-                    "anyOf": [
-                        {
-                            "type": "string"
-                        },
-                        {
-                            "type": "null"
-                        }
-                    ],
-                    "description": "Имя записывающегося; у админа его нет."
-                }
-            },
-            "required": [
-                "role",
-                "bookerName"
-            ],
-            "description": "Сессия — то, что подписано в httpOnly-cookie `session` и определяет доступ."
-        },
-        "LoginInput": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "LoginInput.json",
-            "type": "object",
-            "properties": {
-                "password": {
-                    "type": "string",
-                    "minLength": 1,
-                    "pattern": "\\S",
-                    "description": "Пароль — непустая строка, минимум один непробельный символ: `'   '` не\nпроходит, хотя с одним лишь `@minLength(1)` прошло бы."
-                },
-                "bookerName": {
-                    "type": "string",
-                    "description": "Имя гостя: для гостя обязательно (непустая строка), для админа игнорируется."
-                }
-            },
-            "required": [
-                "password"
-            ],
-            "description": "Данные входа: пароль обязателен, имя гостя — опционально."
-        },
         "Meeting": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "$id": "Meeting.json",
@@ -83,7 +27,7 @@
                 "date",
                 "time"
             ],
-            "description": "Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт\nMantine: 'YYYY-MM-DD' и 'HH:mm'. Строки, а не Date, ещё и потому, что\nnew Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных\nчасовых поясах показывает предыдущий день."
+            "description": "Записи на встречи.\n\nРоль определяется по cookie `role`: `/admin` → `admin`, остальное → `guest`\n(клиент ставит её по URL; сервер не проверяет пароли и не выдает сессий).\nАдминские ручки требуют роль `admin` (иначе 403).\n\nДоменные правила букинга — окно 14 дней, прошедшие даты, выходные, сетка\nвремени — сервер проверяет (ADR-0009, server/booking-rules.ts). Формат\nпроверяется по сгенерированным схемам через `ajv` (K4); целостность —\nнесуществующий или деактивированный тип, корректное имя записавшегося из тела\n(S5/C1). Русские тексты ошибок — в `server/routes.ts`.Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт\nMantine: 'YYYY-MM-DD' и 'HH:mm'."
         },
         "MeetingDraft": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -100,16 +44,24 @@
                     "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
                     "description": "Начало встречи, 'HH:mm'."
                 },
+                "booker_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "\\S",
+                    "description": "Имя записавшегося: непустая строка без пробельных только из пробелов,\nне длиннее 100 символов."
+                },
                 "meeting_type_id": {
                     "type": "string",
-                    "description": "Тип встречи. Если поле передано — тип обязан существовать и быть активным,\nиначе 400 (S5, C1); без поля запись создаётся «нетипизированной», как\nлегаси-строки C5 (гостевой флоу F7 всегда передаёт тип). Формат — строка:\nне-строка отклоняется схемой как 400, а несуществующая строка — проверкой\nцелостности в роуте."
+                    "description": "Тип встречи. Если поле передано — тип обязан существовать и быть активным,\nиначе 400; без поля запись создаётся «нетипизированной»."
                 }
             },
             "required": [
                 "date",
-                "time"
+                "time",
+                "booker_name"
             ],
-            "description": "Данные новой записи — всё, кроме идентификатора; booker сюда не входит."
+            "description": "Данные новой записи — всё, кроме идентификатора.\nИмя записавшегося `booker_name` передаётся из формы (не из сессии)."
         },
         "DateRange": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -155,7 +107,7 @@
                     "type": "integer",
                     "minimum": 30,
                     "maximum": 180,
-                    "description": "Длительность встречи этого типа в минутах: 30–180, кратно 30. Кратность\nтридцати проверяет роут: декоратора для неё в TypeSpec нет (в JSON Schema\nесть multipleOf, но эмиттер его не породит) — границы дают minValue и\nmaxValue. Информационное поле: сетку слотов и занятость оно не меняет\n(слот общий, ADR-0008; влияние длительности на занятость — путь роста,\nне v1)."
+                    "description": "Длительность встречи этого типа в минутах: 30–180, кратно 30. Кратность\nтридцати проверяет роут; информационное поле: сетку слотов и занятость\nоно не меняет (ADR-0008)."
                 },
                 "active": {
                     "type": "boolean",
@@ -180,7 +132,7 @@
                     "type": "string",
                     "minLength": 1,
                     "pattern": "\\S",
-                    "description": "Название типа — непустая строка, минимум один непробельный символ: `'   '`\nне проходит, хотя с одним лишь `@minLength(1)` прошло бы (тот же приём,\nчто у `LoginInput.password`, K4)."
+                    "description": "Название типа — непустая строка, минимум один непробельный символ."
                 },
                 "description": {
                     "type": "string",
@@ -190,7 +142,7 @@
                     "type": "integer",
                     "minimum": 30,
                     "maximum": 180,
-                    "description": "Длительность встреч этого типа в минутах: те же границы и кратность, что\nу MeetingType.duration_minutes (кратность — в роуте, как при чтении)."
+                    "description": "Длительность встреч этого типа в минутах: 30–180, кратно 30."
                 }
             },
             "required": [
@@ -259,24 +211,6 @@
                 "error"
             ],
             "description": "Форма всех ошибок API: русское описание уходит клиенту как есть."
-        },
-        "OkSession": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "OkSession.json",
-            "type": "object",
-            "properties": {
-                "_": {
-                    "type": "number",
-                    "const": 200
-                },
-                "session": {
-                    "$ref": "Session.json"
-                }
-            },
-            "required": [
-                "_",
-                "session"
-            ]
         },
         "OkMeetingList": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -428,24 +362,6 @@
                 "error"
             ]
         },
-        "Unauthorized": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "Unauthorized.json",
-            "type": "object",
-            "properties": {
-                "_": {
-                    "type": "number",
-                    "const": 401
-                },
-                "error": {
-                    "$ref": "ErrorResponse.json"
-                }
-            },
-            "required": [
-                "_",
-                "error"
-            ]
-        },
         "Forbidden": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "$id": "Forbidden.json",
@@ -463,7 +379,7 @@
                 "_",
                 "error"
             ],
-            "description": "Нет прав: сессия есть, но роль не admin (T2)."
+            "description": "Нет прав: роль не admin (ADR-0010)."
         },
         "Conflict": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",

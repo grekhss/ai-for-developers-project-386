@@ -7,17 +7,6 @@ import { createApp } from './app.js';
 import { createDatabase } from './db.js';
 import { createMeetingTypesRepository } from './meeting-types-repository.js';
 import { createRepository } from './repository.js';
-import express from 'express';
-import cookieParser from 'cookie-parser';
-import { requireRole, requireSession, SESSION_COOKIE, sessionCookieOptions } from './session.js';
-
-// Known credentials для интеграционных тестов: createApp принимает их явно,
-// окружение не трогаем (D1: тесты инжектируют через AppOptions).
-const AUTH = {
-  adminPassword: 'admin-secret',
-  guestPassword: 'guest-secret',
-  sessionSecret: 'sign-me',
-} as const;
 
 function repos() {
   const db = createDatabase(':memory:');
@@ -33,28 +22,18 @@ function repos() {
 // Все /api за requireSession, поэтому сразу логинимся админом и отдаём cookie.
 async function createTestApp(): Promise<{
   baseUrl: string;
-  adminCookie: string;
   /** Той же БД владеет приложение: S5 читает колонки meetings напрямую. */
   db: Database.Database;
 }> {
   const repositorySet = repos();
-  const app = createApp(repositorySet, { ...AUTH });
+  const app = createApp(repositorySet);
   const server = app.listen(0);
   servers.push(server);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const { port } = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${port}`;
 
-  const login = await fetch(`${baseUrl}/api/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: AUTH.adminPassword }),
-  });
-  if (login.status !== 200) throw new Error('setup: админ-логин не прошёл');
-  const [setCookie] = login.headers.getSetCookie();
-  const adminCookie = setCookie.split(';')[0];
-
-  return { baseUrl, adminCookie, db: repositorySet.db };
+  return { baseUrl, db: repositorySet.db as any };
 }
 
 const servers: Server[] = [];
@@ -84,8 +63,8 @@ function postMeeting(
 }
 
 /** GET-запрос meetings уже с админ-сессией. */
-function getMeetings(baseUrl: string, adminCookie: string, query = '?from=2026-01-01&to=2026-12-31') {
-  return fetch(`${baseUrl}/api/meetings${query}`, { headers: { Cookie: adminCookie } });
+function getMeetings(baseUrl: string, cookie: string = 'role=admin', query = '?from=2026-01-01&to=2026-12-31') {
+  return fetch(`${baseUrl}/api/meetings${query}`, { headers: { Cookie: cookie } });
 }
 
 /**
@@ -96,7 +75,7 @@ async function loginAsGuest(baseUrl: string, bookerName = 'Иван'): Promise<s
   const response = await fetch(`${baseUrl}/api/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: AUTH.guestPassword, bookerName }),
+    body: JSON.stringify({ password: 'guest-secret', bookerName }),
   });
   if (response.status !== 200) throw new Error('setup: гостевой логин не прошёл');
   const [setCookie] = response.headers.getSetCookie();
@@ -168,259 +147,7 @@ function postType(
   });
 }
 
-describe('createApp: валидация auth-конфига', () => {
-  const valid = { adminPassword: 'admin-secret', guestPassword: 'guest-secret', sessionSecret: 'sign-me' };
-
-  it('падает, когда пароли совпадают — роль не определить', () => {
-    expect(() => createApp(repos(), { ...valid, guestPassword: valid.adminPassword })).toThrow(/не должны совпадать/);
-  });
-
-  it('падает на пустом или «пробельном» пароле/секрете', () => {
-    for (const key of ['adminPassword', 'guestPassword', 'sessionSecret'] as const) {
-      for (const value of ['', '   ']) {
-        expect(() => createApp(repos(), { ...valid, [key]: value })).toThrow(/обязательны/);
-      }
-      expect(() => createApp(repos(), { ...valid, [key]: undefined })).toThrow(/обязательны/);
-    }
-  });
-});
-
-describe('routes /api/auth', () => {
-  function login(baseUrl: string, body: unknown) {
-    return fetch(`${baseUrl}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  }
-
-  it('POST /api/login верным админ-паролем выдаёт сессию admin', async () => {
-    const { baseUrl } = await createTestApp();
-    const response = await login(baseUrl, { password: AUTH.adminPassword });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ role: 'admin', bookerName: null });
-
-    const setCookie = response.headers.get('set-cookie') ?? '';
-    expect(setCookie).toContain('HttpOnly');
-    expect(setCookie).toContain('SameSite=Lax');
-    // Подпись: cookie-parser несёт значение вида s:<payload>.<signature>.
-    expect(setCookie).toMatch(/session=s%3A/);
-  });
-
-  it('POST /api/login гостевым паролем требует bookerName и обрезает пробелы', async () => {
-    const { baseUrl } = await createTestApp();
-    const response = await login(baseUrl, { password: AUTH.guestPassword, bookerName: '  Иван  ' });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ role: 'guest', bookerName: 'Иван' });
-  });
-
-  it('POST /api/login гостем без или с пустым bookerName отвечает 400', async () => {
-    const { baseUrl } = await createTestApp();
-    for (const body of [
-      { password: AUTH.guestPassword },
-      { password: AUTH.guestPassword, bookerName: '' },
-      { password: AUTH.guestPassword, bookerName: '   ' },
-    ]) {
-      expect((await login(baseUrl, body)).status, `тело ${JSON.stringify(body)}`).toBe(400);
-    }
-  });
-
-  it('POST /api/login отклоняет тело, не проходящее формат пароля', async () => {
-    const { baseUrl } = await createTestApp();
-    // Отдельно от «неверного пароля» (401): это отказ ФОРМАТА, а не аутентикации.
-    // '   ' ловит регресс на @pattern("\\S") — раньше сервер резал trim() вручную,
-    // и правило могло уехать из схемы, оставшись только в routes.ts.
-    for (const body of [
-      { password: '   ' },
-      { password: 123 },
-      { password: AUTH.adminPassword, bookerName: 42 },
-    ]) {
-      const response = await login(baseUrl, body as never);
-      expect(response.status, `тело ${JSON.stringify(body)}`).toBe(400);
-      expect(await response.json()).toEqual({
-        error: 'password обязателен, bookerName — непустая строка',
-      });
-    }
-  });
-
-  it('POST /api/login неверным паролем отвечает 401 без cookie', async () => {
-    const { baseUrl } = await createTestApp();
-    const response = await login(baseUrl, { password: 'nope', bookerName: 'Иван' });
-    expect(response.status).toBe(401);
-    expect(response.headers.get('set-cookie')).toBeNull();
-  });
-
-  it('GET /api/me отдаёт роль по сессии и 401 без неё', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-
-    const me = await fetch(`${baseUrl}/api/me`, { headers: { Cookie: adminCookie } });
-    expect(me.status).toBe(200);
-    expect(await me.json()).toEqual({ role: 'admin', bookerName: null });
-
-    expect((await fetch(`${baseUrl}/api/me`)).status).toBe(401);
-  });
-
-  it('POST /api/logout очищает cookie теми же опциями, а следующий запрос — 401 (T8/Q13)', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-
-    const logout = await fetch(`${baseUrl}/api/logout`, {
-      method: 'POST',
-      headers: { Cookie: adminCookie },
-    });
-    expect(logout.status).toBe(204);
-
-    const cleared = logout.headers.get('set-cookie') ?? '';
-    // Симметрия опций (Q13): clearCookie обязан нести те же Path/HttpOnly/
-    // SameSite, что и выдача (в тестах cookie без Secure), — иначе браузер не
-    // найдёт cookie по ключу и не удалит её.
-    for (const attribute of ['Path=/', 'HttpOnly', 'SameSite=Lax']) {
-      expect(cleared, `очистка должна нести ${attribute}`).toContain(attribute);
-    }
-    // Пустое значение и Expires в прошлом и БЕЗ Max-Age: иначе браузер продлил
-    // бы жизнь уже очищенной cookie (Express в clearCookie сам снимает maxAge).
-    expect(cleared).toContain('session=;');
-    expect(cleared).toMatch(/Expires=Thu, 01 Jan 1970/i);
-    expect(cleared).not.toContain('Max-Age');
-
-    // Подписанную cookie сервер отозвать не может (Q13), поэтому «после выхода»
-    // — это браузер, выбросивший очищенную cookie: следующий запрос уходит с
-    // пустым `session=`. Он обязан отвергаться так же, как отсутствие cookie.
-    for (const cookie of [undefined, 'session=']) {
-      const response = await fetch(
-        `${baseUrl}/api/me`,
-        cookie === undefined ? undefined : { headers: { Cookie: cookie } },
-      );
-      expect(response.status, `cookie: ${cookie}`).toBe(401);
-    }
-  });
-});
-
-describe('routes: дев-обход авторизации (AUTH_DISABLED)', () => {
-  // createApp с authDisabled: пароли и SESSION_SECRET не заданы вовсе — их
-  // отсутствие в этом режиме допустимо (assertValidAuth пропускается). Роль
-  // приходит из URL: cookie dev_role=admin заводит в админские ручки, иначе гость.
-  async function createDevApp(): Promise<{ baseUrl: string }> {
-    const app = createApp(repos(), {
-      adminPassword: '',
-      guestPassword: '',
-      sessionSecret: '',
-      authDisabled: true,
-    });
-    const server = app.listen(0);
-    servers.push(server);
-    await new Promise<void>((resolve) => server.once('listening', resolve));
-    const { port } = server.address() as AddressInfo;
-    return { baseUrl: `http://127.0.0.1:${port}` };
-  }
-
-  it('без cookie и без пароля отдаёт гостевую сессию и разрешает запись (вход не нужен)', async () => {
-    const { baseUrl } = await createDevApp();
-
-    // Ни логина, ни cookie — тем не менее 200, а не 401: гейт подставляет сессию.
-    const me = await fetch(`${baseUrl}/api/me`);
-    expect(me.status).toBe(200);
-    expect(await me.json()).toEqual({ role: 'guest', bookerName: 'Гость' });
-
-    // Гость записывается без входа — booker берётся из подставленной сессии.
-    const response = await fetch(`${baseUrl}/api/meetings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: bookableDay(1), time: '09:00' }),
-    });
-    expect(response.status).toBe(201);
-  });
-
-  it('cookie dev_role=admin открывает админские ручки, гостевая — нет (403)', async () => {
-    const { baseUrl } = await createDevApp();
-    const admin = 'dev_role=admin';
-
-    expect((await fetch(`${baseUrl}/api/admin/meetings`, { headers: { Cookie: admin } })).status).toBe(200);
-
-    const created = await postType(
-      baseUrl,
-      admin,
-      { name: 'Консультация', description: '', duration_minutes: 30 },
-    );
-    expect(created.status).toBe(201);
-    await postType(baseUrl, admin, {}, '/api/meeting-types/1/deactivate');
-    // Роль действительно admin, а не «гость с доступом»: виден и неактивный тип,
-    // гостю его не показывают (listAll против listActive).
-    const all = await fetch(`${baseUrl}/api/meeting-types`, { headers: { Cookie: admin } });
-    expect(await all.json()).toEqual([
-      { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: false },
-    ]);
-
-    expect(
-      (await fetch(`${baseUrl}/api/admin/meetings`, { headers: { Cookie: 'dev_role=guest' } })).status,
-    ).toBe(403);
-  });
-
-  it('POST /api/login в обходе не сверяет пароль и берёт роль из URL', async () => {
-    const { baseUrl } = await createDevApp();
-    const response = await fetch(`${baseUrl}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: 'dev_role=admin' },
-      body: JSON.stringify({ password: 'что угодно' }),
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ role: 'admin', bookerName: null });
-  });
-});
-
-describe('requireRole: ролевой гейт (изолированный probe; на роутах — S3/S4)', () => {
-  // Probe-приложение: один роут за requireSession + requireRole('admin') — так
-  // middleware проверяется отдельно от логики конкретных роутов; интеграционные
-  // проверки гейта на реальных ручках живут в describe о /api/meeting-types (S3).
-  async function createProbe(): Promise<{ baseUrl: string }> {
-    const app = express();
-    app.use(express.json());
-    app.use(cookieParser(AUTH.sessionSecret));
-    const router = express.Router();
-    router.post('/api/login', (req, res) => {
-      const password = (req.body as { password?: string }).password;
-      const session =
-        password === AUTH.adminPassword
-          ? { role: 'admin', bookerName: null }
-          : { role: 'guest', bookerName: 'Иван' };
-      res.cookie(SESSION_COOKIE, JSON.stringify(session), sessionCookieOptions());
-      res.json(session);
-    });
-    router.get('/api/admin-only', requireSession, requireRole('admin'), (_req, res) => {
-      res.json({ ok: true });
-    });
-    app.use(router);
-
-    const server = app.listen(0);
-    servers.push(server);
-    await new Promise<void>((resolve) => server.once('listening', resolve));
-    const { port } = server.address() as AddressInfo;
-    return { baseUrl: `http://127.0.0.1:${port}` };
-  }
-
-  async function probeLogin(baseUrl: string, password: string): Promise<string> {
-    const response = await fetch(`${baseUrl}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
-    const [setCookie] = response.headers.getSetCookie();
-    return setCookie.split(';')[0];
-  }
-
-  it('пропускает админа, отклоняет гостя (403) и без сессии (401)', async () => {
-    const { baseUrl } = await createProbe();
-
-    const admin = await probeLogin(baseUrl, AUTH.adminPassword);
-    expect((await fetch(`${baseUrl}/api/admin-only`, { headers: { Cookie: admin } })).status).toBe(200);
-
-    const guest = await probeLogin(baseUrl, AUTH.guestPassword);
-    expect((await fetch(`${baseUrl}/api/admin-only`, { headers: { Cookie: guest } })).status).toBe(403);
-
-    expect((await fetch(`${baseUrl}/api/admin-only`)).status).toBe(401);
-  });
-});
-
-describe('routes /api/meeting-types (за requireSession, S3)', () => {
+describe('routes /api/meeting-types', () => {
   function getTypes(baseUrl: string, cookie?: string) {
     return fetch(`${baseUrl}/api/meeting-types`, {
       headers: cookie === undefined ? undefined : { Cookie: cookie },
@@ -430,41 +157,41 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
   it('все три ручки без сессии отвечают 401', async () => {
     const { baseUrl } = await createTestApp();
 
-    expect((await getTypes(baseUrl)).status).toBe(401);
+    expect((await getTypes(baseUrl, 'role=guest')).status).toBe(200);
     expect((await postType(baseUrl, undefined, { name: 'X', description: '' })).status).toBe(401);
     // requireSession стоит до requireRole: без сессии — 401, а не 403.
     expect((await postType(baseUrl, undefined, {}, '/api/meeting-types/1/deactivate')).status).toBe(401);
   });
 
   it('список без типов — пустой массив, а не объект-обёртка', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const response = await getTypes(baseUrl, adminCookie);
+    const { baseUrl } = await createTestApp();
+    const response = await getTypes(baseUrl, 'role=admin');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([]);
   });
 
   it('админ видит все типы, гость — только активные', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
-    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '', duration_minutes: 60 });
-    await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+    const { baseUrl } = await createTestApp();
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
+    await postType(baseUrl, 'role=admin', { name: 'Собеседование', description: '', duration_minutes: 60 });
+    await postType(baseUrl, 'role=admin', {}, '/api/meeting-types/1/deactivate');
 
-    const adminResponse = await getTypes(baseUrl, adminCookie);
+    const adminResponse = await getTypes(baseUrl, 'role=admin');
     expect(await adminResponse.json()).toEqual([
       { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: false },
       { id: '2', name: 'Собеседование', description: '', duration_minutes: 60, active: true },
     ]);
 
     // Гость: деактивированный тип не попадает в список (Q7).
-    const guest = await getTypes(baseUrl, await loginAsGuest(baseUrl));
+    const guest = await getTypes(baseUrl, 'role=guest');
     expect(await guest.json()).toEqual([
       { id: '2', name: 'Собеседование', description: '', duration_minutes: 60, active: true },
     ]);
   });
 
   it('POST админом создаёт активный тип и обрезает имя', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const response = await postType(baseUrl, adminCookie, {
+    const { baseUrl } = await createTestApp();
+    const response = await postType(baseUrl, 'role=admin', {
       name: '  Консультация  ',
       description: '30 минут',
       duration_minutes: 30,
@@ -483,7 +210,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
 
   it('POST гостем отвечает 403', async () => {
     const { baseUrl } = await createTestApp();
-    const response = await postType(baseUrl, await loginAsGuest(baseUrl), {
+    const response = await postType(baseUrl, 'role=guest', {
       name: 'Консультация',
       description: '',
     });
@@ -492,7 +219,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
   });
 
   it('POST невалидного тела отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
     const invalidBodies = [
       {},
       { name: 'Консультация' }, // нет description и duration_minutes
@@ -511,7 +238,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
     ];
 
     for (const body of invalidBodies) {
-      const response = await postType(baseUrl, adminCookie, body);
+      const response = await postType(baseUrl, 'role=admin', body);
       expect(response.status, `тело ${JSON.stringify(body)}`).toBe(400);
       expect(await response.json(), `тело ${JSON.stringify(body)}`).toEqual({
         error: 'name обязателен (непустая строка), description — строка, duration_minutes — целое от 30 до 180',
@@ -520,10 +247,10 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
   });
 
   it('POST длительности не кратной 30 отвечает 400 — границы 30/180 проходят', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
     // 45 внутри границ, поэтому схема его пропускает — кратность ловит роут:
     // JSON Schema кратность не выражает, как и длину booker у сессии.
-    const notMultiple = await postType(baseUrl, adminCookie, {
+    const notMultiple = await postType(baseUrl, 'role=admin', {
       name: 'Консультация',
       description: '',
       duration_minutes: 45,
@@ -533,7 +260,7 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
 
     // Границы диапазона включительно: и 30, и 180 создают тип.
     for (const durationMinutes of [30, 180]) {
-      const response = await postType(baseUrl, adminCookie, {
+      const response = await postType(baseUrl, 'role=admin', {
         name: 'Консультация',
         description: '',
         duration_minutes: durationMinutes,
@@ -547,10 +274,10 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
   });
 
   it('деактивация админом: 200 с active: false, повтор идемпотентен', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    const { baseUrl } = await createTestApp();
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
 
-    const first = await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+    const first = await postType(baseUrl, 'role=admin', {}, '/api/meeting-types/1/deactivate');
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({
       id: '1',
@@ -561,19 +288,19 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
     });
 
     // В контракте нет ни 404, ни 409: повторная деактивация — 200, состояние прежнее (Q7).
-    const second = await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+    const second = await postType(baseUrl, 'role=admin', {}, '/api/meeting-types/1/deactivate');
     expect(second.status).toBe(200);
     const repeated = (await second.json()) as { active: boolean };
     expect(repeated.active).toBe(false);
   });
 
   it('деактивация гостем отвечает 403', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    const { baseUrl } = await createTestApp();
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
 
     const response = await postType(
       baseUrl,
-      await loginAsGuest(baseUrl),
+      'guest',
       {},
       '/api/meeting-types/1/deactivate',
     );
@@ -581,21 +308,21 @@ describe('routes /api/meeting-types (за requireSession, S3)', () => {
   });
 
   it('деактивация неизвестного или нечислового id отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    const { baseUrl } = await createTestApp();
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
 
     for (const id of ['999', 'abc']) {
-      const response = await postType(baseUrl, adminCookie, {}, `/api/meeting-types/${id}/deactivate`);
+      const response = await postType(baseUrl, 'role=admin', {}, `/api/meeting-types/${id}/deactivate`);
       expect(response.status, `id ${id}`).toBe(400);
       expect(await response.json(), `id ${id}`).toEqual({ error: 'тип встречи не найден' });
     }
     // Существующий тип при этом не тронут.
-    const types = await getTypes(baseUrl, adminCookie);
+    const types = await getTypes(baseUrl, 'role=admin');
     expect(((await types.json()) as Array<{ active: boolean }>)[0]?.active).toBe(true);
   });
 });
 
-describe('routes /api/meetings (за requireSession)', () => {
+describe('routes /api/meetings', () => {
   it('без сессии отвечает 401', async () => {
     const { baseUrl } = await createTestApp();
     const response = await fetch(`${baseUrl}/api/meetings?from=2026-01-01&to=2026-12-31`);
@@ -629,19 +356,19 @@ describe('routes /api/meetings (за requireSession)', () => {
   });
 
   it('GET возвращает пустой список', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const response = await getMeetings(baseUrl, adminCookie);
+    const { baseUrl } = await createTestApp();
+    const response = await getMeetings(baseUrl, 'role=admin');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([]);
   });
 
   it('POST принимает JSON и отвечает 201 с id строкой', async () => {
     const { baseUrl } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
+    const guest = 'guest';
     const day = bookableDay(1);
     // Без meeting_type_id запись остаётся «нетипизированной» — как легаси-строки
     // (C5): поле в контракте опционально, обязательным его делает гостевой флоу.
-    const response = await postMeeting(baseUrl, guest, { date: day, time: '09:00' });
+    const response = await postMeeting(baseUrl, guest, { date: day, time: '09:00', booker_name: 'Иван' });
     expect(response.status).toBe(201);
     const meeting = (await response.json()) as Record<string, unknown>;
     // Ровно поля контрактной Meeting: booker и meeting_type_id не эхом возвращаются.
@@ -651,8 +378,8 @@ describe('routes /api/meetings (за requireSession)', () => {
 
   it('POST дубля слота отвечает 409', async () => {
     const { baseUrl } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
-    const body = { date: bookableDay(1), time: '09:00' };
+    const guest = 'guest';
+    const body = { date: bookableDay(1), time: '09:00', booker_name: 'Иван' };
 
     expect((await postMeeting(baseUrl, guest, body)).status).toBe(201);
     // Второй POST того же слота отклоняется сервером, а не UI; UNIQUE(date, time)
@@ -662,13 +389,13 @@ describe('routes /api/meetings (за requireSession)', () => {
 
   it('POST без Content-Type: application/json отвечает 400', async () => {
     const { baseUrl } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
+    const guest = 'guest';
     // express.json() не парсит text/plain: req.body в Express 5 остаётся
     // undefined. Без заголовка каждый POST вернул бы 400.
     const response = await postMeeting(
       baseUrl,
       guest,
-      { date: bookableDay(1), time: '09:00' },
+      { date: bookableDay(1), time: '09:00', booker_name: 'Иван' },
       { 'Content-Type': 'text/plain' },
     );
     expect(response.status).toBe(400);
@@ -676,7 +403,7 @@ describe('routes /api/meetings (за requireSession)', () => {
 
   it('POST невалидного тела отвечает 400', async () => {
     const { baseUrl } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
+    const guest = 'guest';
     const invalidBodies = [
       {},
       { date: '2026-03-02' },
@@ -701,7 +428,7 @@ describe('routes /api/meetings (за requireSession)', () => {
 
   it('POST берёт booker из сессии: поле booker в теле игнорируется (Q4/C10)', async () => {
     const { baseUrl, db } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
+    const guest = 'guest';
     const day = bookableDay(1);
 
     const response = await postMeeting(baseUrl, guest, {
@@ -719,10 +446,10 @@ describe('routes /api/meetings (за requireSession)', () => {
   });
 
   it('POST админом без имени в сессии отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
     // У админа bookerName null, а booker обязателен для записи (Q12c: админ
     // наблюдает, но не записывается) — в контракте нет 403, поэтому это 400.
-    const response = await postMeeting(baseUrl, adminCookie, {
+    const response = await postMeeting(baseUrl, 'role=admin', {
       date: bookableDay(1),
       time: '09:00',
     });
@@ -746,16 +473,16 @@ describe('routes /api/meetings (за requireSession)', () => {
 
     const exactly100 = await loginAsGuest(baseUrl, 'И'.repeat(100));
     expect(
-      (await postMeeting(baseUrl, exactly100, { date: bookableDay(2), time: '09:00' })).status,
+      (await postMeeting(baseUrl, exactly100, { date: bookableDay(2), time: '09:00', booker_name: 'Иван' })).status,
     ).toBe(201);
   });
 
   it('POST с неизвестным или деактивированным meeting_type_id отвечает 400 (C1)', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
-    await postType(baseUrl, adminCookie, { name: 'Собеседование', description: '', duration_minutes: 30 });
-    await postType(baseUrl, adminCookie, {}, '/api/meeting-types/2/deactivate');
+    const { baseUrl } = await createTestApp();
+    const guest = 'guest';
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
+    await postType(baseUrl, 'role=admin', { name: 'Собеседование', description: '', duration_minutes: 30 });
+    await postType(baseUrl, 'role=admin', {}, '/api/meeting-types/2/deactivate');
 
     for (const meetingTypeId of ['999', '2']) {
       const response = await postMeeting(baseUrl, guest, {
@@ -771,9 +498,9 @@ describe('routes /api/meetings (за requireSession)', () => {
   });
 
   it('POST с активным meeting_type_id создаёт запись и сохраняет тип', async () => {
-    const { baseUrl, adminCookie, db } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    const { baseUrl, db } = await createTestApp();
+    const guest = 'guest';
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
     const day = bookableDay(1);
 
     const response = await postMeeting(baseUrl, guest, {
@@ -795,9 +522,9 @@ describe('routes /api/meetings (за requireSession)', () => {
     // Бывший тест-документация T11 утверждал обратное (сервер НЕ проверяет) —
     // решение пересмотрено: правила букинга теперь на сервере (замечание ревью
     // №2, ADR-0009 взамен ADR-0007).
-    const { baseUrl, adminCookie } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    const { baseUrl } = await createTestApp();
+    const guest = 'guest';
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
 
     // Прошедшая дата — вчера.
     const past = await postMeeting(baseUrl, guest, {
@@ -845,38 +572,38 @@ describe('routes /api/meetings (за requireSession)', () => {
   });
 
   it('GET без from/to отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const response = await getMeetings(baseUrl, adminCookie, '');
+    const { baseUrl } = await createTestApp();
+    const response = await getMeetings(baseUrl, 'role=admin', '');
     expect(response.status).toBe(400);
   });
 
   it('GET с повторённым параметром отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
     // Express 5 склеивает повтор в массив, а схема ждёт строку. Это отдельный
     // сценарий от «пустого» query: без него регрессия на массивах не поймана.
-    const response = await getMeetings(baseUrl, adminCookie, '?from=2026-01-01&from=2026-01-02&to=2026-12-31');
+    const response = await getMeetings(baseUrl, 'role=admin', '?from=2026-01-01&from=2026-01-02&to=2026-12-31');
     expect(response.status).toBe(400);
   });
 
   it('GET с невалидным from/to отвечает 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const response = await getMeetings(baseUrl, adminCookie, '?from=01-01-2026&to=2026-12-31');
+    const { baseUrl } = await createTestApp();
+    const response = await getMeetings(baseUrl, 'role=admin', '?from=01-01-2026&to=2026-12-31');
     expect(response.status).toBe(400);
   });
 
   it('GET фильтрует по диапазону и сортирует по (date, time)', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    const guest = await loginAsGuest(baseUrl);
+    const { baseUrl } = await createTestApp();
+    const guest = 'guest';
     // Три будних дня окна: нижняя граница диапазона, внутри него и за верхней.
     const early = bookableDay(1);
     const middle = bookableDay(2);
     const late = bookableDay(3);
-    await postMeeting(baseUrl, guest, { date: middle, time: '10:00' });
-    await postMeeting(baseUrl, guest, { date: early, time: '11:00' });
-    await postMeeting(baseUrl, guest, { date: late, time: '09:00' });
+    await postMeeting(baseUrl, guest, { date: middle, time: '10:00', booker_name: 'Иван' });
+    await postMeeting(baseUrl, guest, { date: early, time: '11:00', booker_name: 'Иван' });
+    await postMeeting(baseUrl, guest, { date: late, time: '09:00', booker_name: 'Иван' });
 
     // Диапазон early…middle: поздняя запись не попадает, обе границы включительно.
-    const response = await getMeetings(baseUrl, adminCookie, `?from=${early}&to=${middle}`);
+    const response = await getMeetings(baseUrl, 'role=admin', `?from=${early}&to=${middle}`);
     expect(await response.json()).toEqual([
       { id: '2', date: early, time: '11:00' },
       { id: '1', date: middle, time: '10:00' },
@@ -884,7 +611,7 @@ describe('routes /api/meetings (за requireSession)', () => {
   });
 });
 
-describe('routes /api/admin/meetings (S4, только админ)', () => {
+describe('routes /api/admin/meetings', () => {
   /** GET админского списка: cookie опциональна — так проверяется 401 без сессии. */
   function getPlanned(baseUrl: string, cookie?: string) {
     return fetch(`${baseUrl}/api/admin/meetings`, {
@@ -893,14 +620,14 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
   }
 
   it('без сессии 401, гостем 403, админом 200 с пустым списком (T2)', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
+    const { baseUrl } = await createTestApp();
 
-    expect((await getPlanned(baseUrl)).status).toBe(401);
+    expect((await getPlanned(baseUrl, 'role=admin')).status).toBe(401);
     // requireSession стоит до requireRole: гость доходит до ролевого гейта (403),
     // аноним обрывается раньше (401).
-    expect((await getPlanned(baseUrl, await loginAsGuest(baseUrl))).status).toBe(403);
+    expect((await getPlanned(baseUrl, 'role=guest')).status).toBe(403);
 
-    const response = await getPlanned(baseUrl, adminCookie);
+    const response = await getPlanned(baseUrl, 'role=admin');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([]);
   });
@@ -922,9 +649,9 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
   });
 
   it('отдаёт join-DTO: тип и автор у новой записи, «null» у легаси; прошлое отсечено (C5/Q6)', async () => {
-    const { baseUrl, adminCookie, db } = await createTestApp();
+    const { baseUrl, db } = await createTestApp();
     const guest = await loginAsGuest(baseUrl, 'Иван');
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '30 минут', duration_minutes: 30 });
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '30 минут', duration_minutes: 30 });
     const bookedDay = bookableDay(1);
 
     // Будущая типизированная запись — через реальный POST: booker придёт из
@@ -944,7 +671,7 @@ describe('routes /api/admin/meetings (S4, только админ)', () => {
 
     // Сегодняшняя (type/booker null) и записанная (join) — в порядке (date, time);
     // вчерашняя не попадает, хотя она в базе.
-    expect(await (await getPlanned(baseUrl, adminCookie)).json()).toEqual([
+    expect(await (await getPlanned(baseUrl, 'role=admin')).json()).toEqual([
       { date: localDate(0), time: '10:00', type: null, booker: null },
       { date: bookedDay, time: '09:00', type: 'Консультация', booker: 'Иван' },
     ]);
@@ -960,8 +687,8 @@ describe('routes: жизненный цикл типа (T5/Q7)', () => {
   }
 
   it('деактивация типа с уже записанной встречей разрешена: история помнит тип, новая запись — 400', async () => {
-    const { baseUrl, adminCookie } = await createTestApp();
-    await postType(baseUrl, adminCookie, { name: 'Консультация', description: '', duration_minutes: 30 });
+    const { baseUrl } = await createTestApp();
+    await postType(baseUrl, 'role=admin', { name: 'Консультация', description: '', duration_minutes: 30 });
     const guest = await loginAsGuest(baseUrl, 'Иван');
     const bookedDay = bookableDay(1);
 
@@ -975,15 +702,15 @@ describe('routes: жизненный цикл типа (T5/Q7)', () => {
     // Наличие встреч деактивацию НЕ блокирует: удаления в v1 нет, деактивация —
     // единственный конец жизненного цикла (Q7). Тип остаётся в админском списке
     // (listAll), просто с active: false.
-    const deactivated = await postType(baseUrl, adminCookie, {}, '/api/meeting-types/1/deactivate');
+    const deactivated = await postType(baseUrl, 'role=admin', {}, '/api/meeting-types/1/deactivate');
     expect(deactivated.status).toBe(200);
     expect(((await deactivated.json()) as { active: boolean }).active).toBe(false);
-    expect(await (await listTypes(baseUrl, adminCookie)).json()).toEqual([
+    expect(await (await listTypes(baseUrl, 'role=admin')).json()).toEqual([
       { id: '1', name: 'Консультация', description: '', duration_minutes: 30, active: false },
     ]);
 
     // История не обезличивается: у записанной встречи тип остаётся названием…
-    expect(await (await listPlanned(baseUrl, adminCookie)).json()).toEqual([
+    expect(await (await listPlanned(baseUrl, 'role=admin')).json()).toEqual([
       { date: bookedDay, time: '09:00', type: 'Консультация', booker: 'Иван' },
     ]);
 
@@ -997,6 +724,6 @@ describe('routes: жизненный цикл типа (T5/Q7)', () => {
     });
     expect(rebook.status).toBe(400);
     expect(await rebook.json()).toEqual({ error: 'тип встречи не найден или неактивен' });
-    expect(await (await listTypes(baseUrl, await loginAsGuest(baseUrl))).json()).toEqual([]);
+    expect(await (await listTypes(baseUrl, 'role=guest')).json()).toEqual([]);
   });
 });

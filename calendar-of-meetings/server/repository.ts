@@ -13,11 +13,9 @@ export interface MeetingsRepository {
   /** Записи за диапазон дат включительно, в порядке возрастания (date, time). */
   list(from: string, to: string): Meeting[];
   /**
-   * Вставляет запись и возвращает её с присвоенным id. `booker` — имя из
-   * сессии (Q4), поэтому вторым аргументом, а не полем draft'а: тело запроса
-   * его не содержит и игнорируется. `draft.meeting_type_id` без типа хранится
-   * как NULL (легаси-семантика C5). При дубле (date, time) бросает
-   * DuplicateMeetingError, прочие ошибки БД пробрасывает как есть.
+   * Вставляет запись и возвращает её с присвоенным id. `booker` берётся из
+   * тела запроса (ADR-0010); `draft.meeting_type_id` без типа хранится как NULL.
+   * При дубле (date, time) бросает DuplicateMeetingError.
    */
   create(draft: MeetingDraft, booker: string): Meeting;
   /**

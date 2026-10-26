@@ -42,7 +42,7 @@ describe('createInMemoryMeetingsApi', () => {
   it('присваивает создаваемым записям идентификатор и сохраняет их', async () => {
     const api = createInMemoryMeetingsApi();
 
-    const created = await api.create({ date: '2026-10-07', time: '15:30' });
+    const created = await api.create({ date: '2026-10-07', time: '15:30', booker_name: 'Тест' } as any);
 
     expect(created.id).toBeTruthy();
     expect(await api.list({ from: '2026-10-01', to: '2026-10-31' })).toEqual([created]);
@@ -55,7 +55,8 @@ describe('createInMemoryMeetingsApi', () => {
       date: '2026-10-07',
       time: '15:30',
       meeting_type_id: '7',
-    });
+      booker_name: 'Тест',
+    } as any);
 
     // Сервер тип хранит в БД, но и в create, и в list отдаёт ровно
     // { id, date, time } — фейк зеркалит ответ поле в поле, без спреда draft.
@@ -71,7 +72,7 @@ describe('createInMemoryMeetingsApi', () => {
       { id: '3', date: '2026-10-05', time: '09:00' },
     ]);
 
-    const created = await api.create({ date: '2026-10-07', time: '15:30' });
+    const created = await api.create({ date: '2026-10-07', time: '15:30', booker_name: 'Тест' } as any);
 
     expect(created.id).toBe('4');
   });
@@ -81,7 +82,7 @@ describe('createInMemoryMeetingsApi', () => {
     const second = createInMemoryMeetingsApi(seed);
     const range = { from: '2026-10-01', to: '2026-10-31' };
 
-    await first.create({ date: '2026-10-07', time: '15:30' });
+    await first.create({ date: '2026-10-07', time: '15:30', booker_name: 'Тест' } as any);
 
     expect(await first.list(range)).toHaveLength(3);
     expect(await second.list(range)).toHaveLength(2);
@@ -91,7 +92,7 @@ describe('createInMemoryMeetingsApi', () => {
     const source: Meeting[] = [];
     const api = createInMemoryMeetingsApi(source);
 
-    await api.create({ date: '2026-10-07', time: '15:30' });
+    await api.create({ date: '2026-10-07', time: '15:30', booker_name: 'Тест' } as any);
 
     expect(source).toEqual([]);
   });

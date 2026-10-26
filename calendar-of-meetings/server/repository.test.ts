@@ -110,10 +110,10 @@ describe('createRepository', () => {
 
   it('list фильтрует по диапазону и сортирует по (date, time)', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    const late2027 = repo.create({ date: '2027-01-01', time: '09:00' }, 'Иван');
-    repo.create({ date: '2026-01-02', time: '10:00' }, 'Иван');
-    repo.create({ date: '2026-01-01', time: '11:00' }, 'Иван');
-    repo.create({ date: '2026-01-02', time: '09:00' }, 'Иван');
+    const late2027 = repo.create({ date: '2027-01-01', time: '09:00', booker_name: 'Иван' }, 'Иван');
+    repo.create({ date: '2026-01-02', time: '10:00', booker_name: 'Иван' }, 'Иван');
+    repo.create({ date: '2026-01-01', time: '11:00', booker_name: 'Иван' }, 'Иван');
+    repo.create({ date: '2026-01-02', time: '09:00', booker_name: 'Иван' }, 'Иван');
 
     // Сортировка лексикографическая по дате, затем по времени; границы включены.
     expect(repo.list('2026-01-01', '2026-12-31')).toEqual([
@@ -127,7 +127,7 @@ describe('createRepository', () => {
 
   it('create возвращает запись с присвоенным id строкой', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    const meeting = repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван');
+    const meeting = repo.create({ date: '2026-01-05', time: '14:00', booker_name: 'Иван' }, 'Иван');
     expect(meeting).toEqual({ id: '1', date: '2026-01-05', time: '14:00' });
     // id в ответе — строка, как в контракте src/lib/meetings/types.ts.
     expect(typeof meeting.id).toBe('string');
@@ -143,8 +143,8 @@ describe('createRepository', () => {
     );
     const repo = createRepository(db);
 
-    repo.create({ date: '2026-01-05', time: '14:00', meeting_type_id: '1' }, 'Иван');
-    repo.create({ date: '2026-01-06', time: '11:00' }, 'Мария');
+    repo.create({ date: '2026-01-05', time: '14:00', meeting_type_id: '1', booker_name: 'Иван' }, 'Иван');
+    repo.create({ date: '2026-01-06', time: '11:00', booker_name: 'Мария' }, 'Мария');
 
     // Колонка meeting_type_id INTEGER: строковый id контракта ляжет числом;
     // отсутствие поля — NULL, как у легаси-строк (C5).
@@ -158,18 +158,18 @@ describe('createRepository', () => {
 
   it('повторный create того же (date, time) бросает DuplicateMeetingError', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван');
+    repo.create({ date: '2026-01-05', time: '14:00', booker_name: 'Иван' }, 'Иван');
 
-    expect(() => repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван')).toThrow(
+    expect(() => repo.create({ date: '2026-01-05', time: '14:00', booker_name: 'Иван' }, 'Иван')).toThrow(
       DuplicateMeetingError,
     );
   });
 
   it('после миграции дубль (date, time) по-прежнему бросает DuplicateMeetingError', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван');
+    repo.create({ date: '2026-01-05', time: '14:00', booker_name: 'Иван' }, 'Иван');
 
-    expect(() => repo.create({ date: '2026-01-05', time: '14:00' }, 'Иван')).toThrow(
+    expect(() => repo.create({ date: '2026-01-05', time: '14:00', booker_name: 'Иван' }, 'Иван')).toThrow(
       DuplicateMeetingError,
     );
   });
@@ -194,7 +194,7 @@ describe('createRepository', () => {
 
     let thrown: unknown;
     try {
-      repo.create({ date: '', time: '09:00' }, 'Иван');
+      repo.create({ date: '', time: '09:00', booker_name: 'Иван' }, 'Иван');
     } catch (error) {
       thrown = error;
     }
@@ -211,9 +211,9 @@ describe('createRepository: listPlanned (S4/Q6)', () => {
     db.prepare('INSERT INTO meeting_types (name, description) VALUES (?, ?)').run('Консультация', '');
     const repo = createRepository(db);
 
-    repo.create({ date: '2026-05-02', time: '11:00', meeting_type_id: '1' }, 'Иван');
-    repo.create({ date: '2026-05-01', time: '10:00', meeting_type_id: '1' }, 'Мария');
-    repo.create({ date: '2026-05-02', time: '09:00', meeting_type_id: '1' }, 'Пётр');
+    repo.create({ date: '2026-05-02', time: '11:00', meeting_type_id: '1', booker_name: 'Иван' }, 'Иван');
+    repo.create({ date: '2026-05-01', time: '10:00', meeting_type_id: '1', booker_name: 'Мария' }, 'Мария');
+    repo.create({ date: '2026-05-02', time: '09:00', meeting_type_id: '1', booker_name: 'Пётр' }, 'Пётр');
 
     expect(repo.listPlanned('2026-05-01')).toEqual([
       { date: '2026-05-01', time: '10:00', type: 'Консультация', booker: 'Мария' },
@@ -240,7 +240,7 @@ describe('createRepository: listPlanned (S4/Q6)', () => {
     const db = createDatabase(':memory:');
     db.prepare('INSERT INTO meeting_types (name, description, active) VALUES (?, ?, 0)').run('Разбор', '');
     const repo = createRepository(db);
-    repo.create({ date: '2026-05-01', time: '10:00', meeting_type_id: '1' }, 'Иван');
+    repo.create({ date: '2026-05-01', time: '10:00', meeting_type_id: '1', booker_name: 'Иван' }, 'Иван');
 
     // Деактивация — конец жизненного цикла типа, но не обезличивание истории:
     // имя остаётся в строке списка (фильтра по active здесь нет).
@@ -251,9 +251,9 @@ describe('createRepository: listPlanned (S4/Q6)', () => {
 
   it('отбрасывает прошлое, границу from включает, верхней границы нет (Q6/C5)', () => {
     const repo = createRepository(createDatabase(':memory:'));
-    repo.create({ date: '2026-04-30', time: '10:00' }, 'Иван');
-    repo.create({ date: '2026-05-01', time: '10:00' }, 'Иван');
-    repo.create({ date: '2027-01-01', time: '10:00' }, 'Иван');
+    repo.create({ date: '2026-04-30', time: '10:00', booker_name: 'Иван' }, 'Иван');
+    repo.create({ date: '2026-05-01', time: '10:00', booker_name: 'Иван' }, 'Иван');
+    repo.create({ date: '2027-01-01', time: '10:00', booker_name: 'Иван' }, 'Иван');
 
     // «admin unlimited» — окна в 14 дней нет, прошедшее отсекает только from.
     expect(repo.listPlanned('2026-05-01')).toEqual([

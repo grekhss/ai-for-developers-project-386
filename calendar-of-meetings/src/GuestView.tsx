@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Button, Radio, Stack, Stepper, Text } from '@mantine/core';
+import { Alert, Button, Radio, Stack, Stepper, Text, TextInput } from '@mantine/core';
 import MeetingCalendar from './components/MeetingCalendar.tsx';
 import TimeSlots from './components/TimeSlots.tsx';
 import { useMeetings } from './hooks/useMeetings.ts';
@@ -11,8 +11,7 @@ import { formatDateRu } from './lib/date.ts';
 import { formatDurationRu } from './lib/duration.ts';
 
 /**
- * Подпись типа в списке: описание и длительность. Формат минут — единый
- * формат lib/duration.ts, «30 минут» верно для всех допустимых значений.
+ * Подпись типа в списке: описание и длительность.
  */
 function typeOptionDescription(type: MeetingType): string {
   const duration = formatDurationRu(type.duration_minutes);
@@ -20,13 +19,11 @@ function typeOptionDescription(type: MeetingType): string {
 }
 
 interface GuestViewProps {
-  /** Подменяется в тестах, чтобы не делить записи между сценариями. */
   api?: MeetingsApi;
-  /** Типы встреч — тот же шов: в тестах подставляется свой фейк (T1). */
   typesApi?: MeetingTypesApi;
 }
 
-/** Сводка успешной записи для Alert'а: id и статус ответа здесь не нужны. */
+/** Сводка успешной записи для Alert'а. */
 interface BookedSummary {
   typeName: string;
   date: string;
@@ -34,20 +31,15 @@ interface BookedSummary {
 }
 
 /**
- * Гостевое представление (F7): Stepper «Тип → Время → Готово» по D4. Тип —
- * радио-список активных типов (гостю сервер отдаёт только активные, S3), время —
- * календарь с инлайн-сеткой TimeSlots, подтверждение — сводка и «Записаться».
- * Модалку со слотами не используем: её кнопка «Записаться» дублирует шаг
- * подтверждения (D4). Успех и ошибка (409 «слот занят» и прочие) — волосяные
- * Alert'и над степпером, тостов нет. Состояние страницы (шаг, выбор) и оба хука
- * живут здесь, а не в App: вид монтируется только после входа, иначе оба
- * списка ушли бы на сервер без сессии (401, Q12a).
+ * Гостевое представление (F7): Stepper «Тип → Время → Готово» по D4.
+ * Имя записавшегося вводится на шаге «Готово» и передаётся в `booker_name`.
  */
 export default function GuestView({ api = meetingsApi, typesApi = meetingTypesApi }: GuestViewProps) {
   const [step, setStep] = useState(0);
   const [typeId, setTypeId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [time, setTime] = useState<string | null>(null);
+  const [bookerName, setBookerName] = useState('');
   const [lastBooked, setLastBooked] = useState<BookedSummary | null>(null);
   const { meetings, loading, error, createMeeting } = useMeetings(api);
   const { meetingTypes, loading: typesLoading, error: typesError } = useMeetingTypes(typesApi);
@@ -56,9 +48,9 @@ export default function GuestView({ api = meetingsApi, typesApi = meetingTypesAp
   const takenTimes = meetings
     .filter((meeting) => meeting.date === selectedDate)
     .map((meeting) => meeting.time);
-  const readyToConfirm = selectedType !== null && selectedDate !== null && time !== null;
+  const readyToConfirm =
+    selectedType !== null && selectedDate !== null && time !== null && bookerName.trim() !== '';
 
-  // Смена любого выбора гасит строку успеха: она описывает прежнюю запись.
   function selectType(id: string) {
     setLastBooked(null);
     setTypeId(id);
@@ -66,8 +58,6 @@ export default function GuestView({ api = meetingsApi, typesApi = meetingTypesAp
 
   function selectDate(date: string) {
     setLastBooked(null);
-    // Сброс слота прямо в обработчике, а не в эффекте (ARCHITECTURE §5):
-    // время относится к прежнему дню и в подтверждении не должно врать.
     setTime(null);
     setSelectedDate(date);
   }
@@ -79,14 +69,14 @@ export default function GuestView({ api = meetingsApi, typesApi = meetingTypesAp
 
   async function handleBook() {
     if (selectedType === null || selectedDate === null || time === null) return;
+    if (bookerName.trim() === '') return;
 
     const created = await createMeeting({
       date: selectedDate,
       time,
       meeting_type_id: selectedType.id,
+      booker_name: bookerName.trim(),
     });
-    // Строка «Запись: …» — только при успехе: иначе при ошибке создания
-    // под красным Alert'ом висела бы и синяя запись.
     if (created !== null) {
       setLastBooked({ typeName: selectedType.name, date: selectedDate, time });
     }
@@ -161,8 +151,16 @@ export default function GuestView({ api = meetingsApi, typesApi = meetingTypesAp
                 <Text>Время: {time}</Text>
               </>
             )}
+            <TextInput
+              label="Ваше имя"
+              placeholder="Как к вам обращаться"
+              value={bookerName}
+              onChange={(event) => { setLastBooked(null); setBookerName(event.currentTarget.value); }}
+              mt="md"
+              required
+            />
 
-            <Button mt="md" onClick={() => { void handleBook(); }}>
+            <Button mt="md" disabled={!readyToConfirm} onClick={() => { void handleBook(); }}>
               Записаться
             </Button>
           </Stepper.Step>

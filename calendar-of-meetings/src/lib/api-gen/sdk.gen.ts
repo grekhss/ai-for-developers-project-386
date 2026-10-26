@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateMeetingData, CreateMeetingErrors, CreateMeetingResponses, CreateMeetingTypeData, CreateMeetingTypeErrors, CreateMeetingTypeResponses, DeactivateMeetingTypeData, DeactivateMeetingTypeErrors, DeactivateMeetingTypeResponses, GetCurrentSessionData, GetCurrentSessionErrors, GetCurrentSessionResponses, ListMeetingsData, ListMeetingsErrors, ListMeetingsResponses, ListMeetingTypesData, ListMeetingTypesErrors, ListMeetingTypesResponses, ListPlannedMeetingsData, ListPlannedMeetingsErrors, ListPlannedMeetingsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses } from './types.gen';
+import type { CreateMeetingData, CreateMeetingErrors, CreateMeetingResponses, CreateMeetingTypeData, CreateMeetingTypeErrors, CreateMeetingTypeResponses, DeactivateMeetingTypeData, DeactivateMeetingTypeErrors, DeactivateMeetingTypeResponses, ListMeetingsData, ListMeetingsErrors, ListMeetingsResponses, ListMeetingTypesData, ListMeetingTypesResponses, ListPlannedMeetingsData, ListPlannedMeetingsErrors, ListPlannedMeetingsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -20,79 +20,19 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 
 /**
  * Все запланированные встречи одним списком: сегодня и будущее, по возрастанию
- * (date, time), без 14-дневного горизонта. Только админ (C5). (S4)
+ * (date, time), без 14-дневного горизонта. Только админ.
  */
-export const listPlannedMeetings = <ThrowOnError extends boolean = false>(options?: Options<ListPlannedMeetingsData, ThrowOnError>) => (options?.client ?? client).get<ListPlannedMeetingsResponses, ListPlannedMeetingsErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
-    url: '/api/admin/meetings',
-    ...options
-});
+export const listPlannedMeetings = <ThrowOnError extends boolean = false>(options?: Options<ListPlannedMeetingsData, ThrowOnError>) => (options?.client ?? client).get<ListPlannedMeetingsResponses, ListPlannedMeetingsErrors, ThrowOnError>({ url: '/api/admin/meetings', ...options });
 
 /**
- * Вход. Роль определяется только по паролю; для гостя обязателен непустой
- * bookerName (400), неверный пароль — 401. В ответ выставляется cookie `session`.
+ * Список типов встреч. Гость видит только активные, админ — все (Q2/Q7).
  */
-export const login = <ThrowOnError extends boolean = false>(options: Options<LoginData, ThrowOnError>) => (options.client ?? client).post<LoginResponses, LoginErrors, ThrowOnError>({
-    url: '/api/login',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
+export const listMeetingTypes = <ThrowOnError extends boolean = false>(options?: Options<ListMeetingTypesData, ThrowOnError>) => (options?.client ?? client).get<ListMeetingTypesResponses, unknown, ThrowOnError>({ url: '/api/meeting-types', ...options });
 
 /**
- * Выход: сессионная cookie очищается, тела нет. Без сессии — 401.
- */
-export const logout = <ThrowOnError extends boolean = false>(options?: Options<LogoutData, ThrowOnError>) => (options?.client ?? client).post<LogoutResponses, LogoutErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
-    url: '/api/logout',
-    ...options
-});
-
-/**
- * Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать её не может.
- */
-export const getCurrentSession = <ThrowOnError extends boolean = false>(options?: Options<GetCurrentSessionData, ThrowOnError>) => (options?.client ?? client).get<GetCurrentSessionResponses, GetCurrentSessionErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
-    url: '/api/me',
-    ...options
-});
-
-/**
- * Список типов встреч. Гость видит только активные, админ — все (Q2/Q7). (S3)
- */
-export const listMeetingTypes = <ThrowOnError extends boolean = false>(options?: Options<ListMeetingTypesData, ThrowOnError>) => (options?.client ?? client).get<ListMeetingTypesResponses, ListMeetingTypesErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
-    url: '/api/meeting-types',
-    ...options
-});
-
-/**
- * Создание типа встречи. Только админ. (S3)
+ * Создание типа встречи. Только админ.
  */
 export const createMeetingType = <ThrowOnError extends boolean = false>(options: Options<CreateMeetingTypeData, ThrowOnError>) => (options.client ?? client).post<CreateMeetingTypeResponses, CreateMeetingTypeErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
     url: '/api/meeting-types',
     ...options,
     headers: {
@@ -102,47 +42,23 @@ export const createMeetingType = <ThrowOnError extends boolean = false>(options:
 });
 
 /**
- * Деактивация типа; удаления нет (Q7). Только админ. (S3)
+ * Деактивация типа; удаления нет (Q7). Только админ.
  */
-export const deactivateMeetingType = <ThrowOnError extends boolean = false>(options: Options<DeactivateMeetingTypeData, ThrowOnError>) => (options.client ?? client).post<DeactivateMeetingTypeResponses, DeactivateMeetingTypeErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
-    url: '/api/meeting-types/{id}/deactivate',
-    ...options
-});
+export const deactivateMeetingType = <ThrowOnError extends boolean = false>(options: Options<DeactivateMeetingTypeData, ThrowOnError>) => (options.client ?? client).post<DeactivateMeetingTypeResponses, DeactivateMeetingTypeErrors, ThrowOnError>({ url: '/api/meeting-types/{id}/deactivate', ...options });
 
 /**
  * Записи за полуинтервал дат, обе границы включительно, в порядке возрастания (date, time).
  */
-export const listMeetings = <ThrowOnError extends boolean = false>(options: Options<ListMeetingsData, ThrowOnError>) => (options.client ?? client).get<ListMeetingsResponses, ListMeetingsErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
-    url: '/api/meetings',
-    ...options
-});
+export const listMeetings = <ThrowOnError extends boolean = false>(options: Options<ListMeetingsData, ThrowOnError>) => (options.client ?? client).get<ListMeetingsResponses, ListMeetingsErrors, ThrowOnError>({ url: '/api/meetings', ...options });
 
 /**
  * Создание записи. Формат — 400; занятый слот — 409 (UNIQUE(date, time) в базе).
- * Выбор несуществующего/деактивированного типа — тоже 400 (S5, C1).
- * Доменные правила букинга проверяет сервер (ADR-0009): прошедшая дата,
- * выходной, день вне окна 14 дней, время вне сетки 09:00–18:00 с шагом 30
- * и уже начавшийся сегодняшний слот — каждый отдельным 400. `booker` берётся
- * из подписанной сессионной cookie, никогда из тела (Q4): поле `booker` в теле
- * игнорируется (C10), а его отсутствие в сессии (админ) или длина больше 100
- * символов — 400. Возвращает запись с присвоенным id.
+ * Выбор несуществующего/деактивированного типа — тоже 400. Домен — 400
+ * (прошедшее/выходное/вне окна/сетка/уже начавшийся слот) по ADR-0009.
+ * `booker_name` берётся из тела и обязателен; роль определяется по cookie `role`.
+ * Возвращает запись с присвоенным id.
  */
 export const createMeeting = <ThrowOnError extends boolean = false>(options: Options<CreateMeetingData, ThrowOnError>) => (options.client ?? client).post<CreateMeetingResponses, CreateMeetingErrors, ThrowOnError>({
-    security: [{
-            in: 'cookie',
-            name: 'session',
-            type: 'apiKey'
-        }],
     url: '/api/meetings',
     ...options,
     headers: {

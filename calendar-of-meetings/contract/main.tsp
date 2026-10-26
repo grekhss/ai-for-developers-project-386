@@ -3,54 +3,26 @@ import "@typespec/openapi3";
 
 using TypeSpec.Http;
 
-/**
- * Единый декларативный контракт API «Календаря встреч» — единственный источник
- * истины (K1, ADR-0004). Из него генерируются contract/openapi.yaml, TS-типы
- * для фронта (src/lib/contract.gen.ts) и сервера (server/contract.gen.ts);
- * руками .gen.ts не правятся — только `npm run contract`.
- *
- * Записи на встречи. Все /api, кроме входа, требуют сессионную cookie;
- * админские ручки дополнительно требуют роль admin (иначе 403).
- *
- * Доменные правила букинга — окно 14 дней, прошедшие даты, выходные, сетка
- * времени — сервер проверяет (ADR-0009, server/booking-rules.ts). Сверх
- * форматной проверки (server/validate.ts, ajv) сервер ловит целостность:
- * несуществующий или деактивированный тип, пустой/длинный booker из сессии
- * (routes.ts, S5/C1).
- *
- * Часть ручек описана ЗАРАНЕЕ и сервером ещё не реализована (S4): контракт
- * намеренно идёт впереди, чтобы клиентский SDK (K3) собрал их до реализации.
- * Тест сверяет с контрактом только фактически смонтированные роуты.
- */
 @service(#{ title: "Календарь встреч" })
 namespace CalendarOfMeetings;
 
-/** Роль: определяется только сервером по совпадению пароля, с клиента не берётся. */
-alias Role = "admin" | "guest";
-
-/** Сессия — то, что подписано в httpOnly-cookie `session` и определяет доступ. */
-model Session {
-  role: Role;
-  /** Имя записывающегося; у админа его нет. */
-  bookerName: string | null;
-}
-
-/** Данные входа: пароль обязателен, имя гостя — опционально. */
-model LoginInput {
-  /**
-   * Пароль — непустая строка, минимум один непробельный символ: `'   '` не
-   * проходит, хотя с одним лишь `@minLength(1)` прошло бы.
-   */
-  @minLength(1) @pattern("\\S") password: string;
-  /** Имя гостя: для гостя обязательно (непустая строка), для админа игнорируется. */
-  bookerName?: string;
-}
+/**
+ * Записи на встречи.
+ *
+ * Роль определяется по cookie `role`: `/admin` → `admin`, остальное → `guest`
+ * (клиент ставит её по URL; сервер не проверяет пароли и не выдает сессий).
+ * Админские ручки требуют роль `admin` (иначе 403).
+ *
+ * Доменные правила букинга — окно 14 дней, прошедшие даты, выходные, сетка
+ * времени — сервер проверяет (ADR-0009, server/booking-rules.ts). Формат
+ * проверяется по сгенерированным схемам через `ajv` (K4); целостность —
+ * несуществующий или деактивированный тип, корректное имя записавшегося из тела
+ * (S5/C1). Русские тексты ошибок — в `server/routes.ts`.
+ */
 
 /**
  * Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
- * Mantine: 'YYYY-MM-DD' и 'HH:mm'. Строки, а не Date, ещё и потому, что
- * new Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных
- * часовых поясах показывает предыдущий день.
+ * Mantine: 'YYYY-MM-DD' и 'HH:mm'.
  */
 model Meeting {
   /** Идентификатор, присваиваемый базой данных. */
@@ -61,18 +33,23 @@ model Meeting {
   @pattern("^([01]\\d|2[0-3]):[0-5]\\d$") time: string;
 }
 
-/** Данные новой записи — всё, кроме идентификатора; booker сюда не входит. */
+/**
+ * Данные новой записи — всё, кроме идентификатора.
+ * Имя записавшегося `booker_name` передаётся из формы (не из сессии).
+ */
 model MeetingDraft {
   /** День встречи, 'YYYY-MM-DD'. */
   @pattern("^\\d{4}-\\d{2}-\\d{2}$") date: string;
   /** Начало встречи, 'HH:mm'. */
   @pattern("^([01]\\d|2[0-3]):[0-5]\\d$") time: string;
   /**
+   * Имя записавшегося: непустая строка без пробельных только из пробелов,
+   * не длиннее 100 символов.
+   */
+  @minLength(1) @maxLength(100) @pattern("\\S") booker_name: string;
+  /**
    * Тип встречи. Если поле передано — тип обязан существовать и быть активным,
-   * иначе 400 (S5, C1); без поля запись создаётся «нетипизированной», как
-   * легаси-строки C5 (гостевой флоу F7 всегда передаёт тип). Формат — строка:
-   * не-строка отклоняется схемой как 400, а несуществующая строка — проверкой
-   * целостности в роуте.
+   * иначе 400; без поля запись создаётся «нетипизированной».
    */
   meeting_type_id?: string;
 }
@@ -98,11 +75,8 @@ model MeetingType {
   description: string;
   /**
    * Длительность встречи этого типа в минутах: 30–180, кратно 30. Кратность
-   * тридцати проверяет роут: декоратора для неё в TypeSpec нет (в JSON Schema
-   * есть multipleOf, но эмиттер его не породит) — границы дают minValue и
-   * maxValue. Информационное поле: сетку слотов и занятость оно не меняет
-   * (слот общий, ADR-0008; влияние длительности на занятость — путь роста,
-   * не v1).
+   * тридцати проверяет роут; информационное поле: сетку слотов и занятость
+   * оно не меняет (ADR-0008).
    */
   @minValue(30) @maxValue(180) duration_minutes: int32;
   /** Активен ли тип: деактивированный нельзя выбрать при новой записи (Q7). */
@@ -112,17 +86,12 @@ model MeetingType {
 /** Данные нового типа встречи — всё, кроме идентификатора и признака активности. */
 model MeetingTypeDraft {
   /**
-   * Название типа — непустая строка, минимум один непробельный символ: `'   '`
-   * не проходит, хотя с одним лишь `@minLength(1)` прошло бы (тот же приём,
-   * что у `LoginInput.password`, K4).
+   * Название типа — непустая строка, минимум один непробельный символ.
    */
   @minLength(1) @pattern("\\S") name: string;
   /** Описание типа. */
   description: string;
-  /**
-   * Длительность встреч этого типа в минутах: те же границы и кратность, что
-   * у MeetingType.duration_minutes (кратность — в роуте, как при чтении).
-   */
+  /** Длительность встреч этого типа в минутах: 30–180, кратно 30. */
   @minValue(30) @maxValue(180) duration_minutes: int32;
 }
 
@@ -146,15 +115,7 @@ model ErrorResponse {
   error: string;
 }
 
-/** Cookie-сессия: signed httpOnly-cookie `session`, SameSite=Lax, Max-Age 14 дней. */
-alias SessionCookie = ApiKeyAuth<ApiKeyLocation.cookie, "session">;
-
 // ===== Ответы
-
-model OkSession {
-  @statusCode _: 200;
-  @body session: Session;
-}
 
 model OkMeetingList {
   @statusCode _: 200;
@@ -196,12 +157,7 @@ model BadRequest {
   @body error: ErrorResponse;
 }
 
-model Unauthorized {
-  @statusCode _: 401;
-  @body error: ErrorResponse;
-}
-
-/** Нет прав: сессия есть, но роль не admin (T2). */
+/** Нет прав: роль не admin (ADR-0010). */
 model Forbidden {
   @statusCode _: 403;
   @body error: ErrorResponse;
@@ -214,92 +170,55 @@ model Conflict {
 
 // ===== Операции
 
-/**
- * Вход. Роль определяется только по паролю; для гостя обязателен непустой
- * bookerName (400), неверный пароль — 401. В ответ выставляется cookie `session`.
- */
-@route("/api/login")
-@post
-op login(@body input: LoginInput):
-  | OkSession
-  | BadRequest
-  | Unauthorized;
-
-/** Выход: сессионная cookie очищается, тела нет. Без сессии — 401. */
-@route("/api/logout")
-@post
-@useAuth(SessionCookie)
-op logout(): NoContent | Unauthorized;
-
-/** Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать её не может. */
-@route("/api/me")
-@get
-@useAuth(SessionCookie)
-op getCurrentSession(): OkSession | Unauthorized;
-
 /** Записи за полуинтервал дат, обе границы включительно, в порядке возрастания (date, time). */
 @route("/api/meetings")
 @get
-@useAuth(SessionCookie)
 op listMeetings(
   @doc("День начала, включительно, 'YYYY-MM-DD'.") @query from: string,
   @doc("День конца, включительно, 'YYYY-MM-DD'.") @query to: string,
-): OkMeetingList | BadRequest | Unauthorized;
+): OkMeetingList | BadRequest;
 
 /**
  * Создание записи. Формат — 400; занятый слот — 409 (UNIQUE(date, time) в базе).
- * Выбор несуществующего/деактивированного типа — тоже 400 (S5, C1).
- * Доменные правила букинга проверяет сервер (ADR-0009): прошедшая дата,
- * выходной, день вне окна 14 дней, время вне сетки 09:00–18:00 с шагом 30
- * и уже начавшийся сегодняшний слот — каждый отдельным 400. `booker` берётся
- * из подписанной сессионной cookie, никогда из тела (Q4): поле `booker` в теле
- * игнорируется (C10), а его отсутствие в сессии (админ) или длина больше 100
- * символов — 400. Возвращает запись с присвоенным id.
+ * Выбор несуществующего/деактивированного типа — тоже 400. Домен — 400
+ * (прошедшее/выходное/вне окна/сетка/уже начавшийся слот) по ADR-0009.
+ * `booker_name` берётся из тела и обязателен; роль определяется по cookie `role`.
+ * Возвращает запись с присвоенным id.
  */
 @route("/api/meetings")
 @post
-@useAuth(SessionCookie)
 op createMeeting(@body draft: MeetingDraft):
   | CreatedMeeting
   | BadRequest
-  | Unauthorized
   | Conflict;
 
-// ===== Планируемая ручка (S4) — описана заранее, сервером пока не реализована
-
 /**
- * Список типов встреч. Гость видит только активные, админ — все (Q2/Q7). (S3)
+ * Список типов встреч. Гость видит только активные, админ — все (Q2/Q7).
  */
 @route("/api/meeting-types")
 @get
-@useAuth(SessionCookie)
-op listMeetingTypes(): OkMeetingTypeList | Unauthorized;
+op listMeetingTypes(): OkMeetingTypeList;
 
-/** Создание типа встречи. Только админ. (S3) */
+/** Создание типа встречи. Только админ. */
 @route("/api/meeting-types")
 @post
-@useAuth(SessionCookie)
 op createMeetingType(@body draft: MeetingTypeDraft):
   | CreatedMeetingType
   | BadRequest
-  | Unauthorized
   | Forbidden;
 
-/** Деактивация типа; удаления нет (Q7). Только админ. (S3) */
+/** Деактивация типа; удаления нет (Q7). Только админ. */
 @route("/api/meeting-types/{id}/deactivate")
 @post
-@useAuth(SessionCookie)
 op deactivateMeetingType(@path id: string):
   | OkMeetingType
   | BadRequest
-  | Unauthorized
   | Forbidden;
 
 /**
  * Все запланированные встречи одним списком: сегодня и будущее, по возрастанию
- * (date, time), без 14-дневного горизонта. Только админ (C5). (S4)
+ * (date, time), без 14-дневного горизонта. Только админ.
  */
 @route("/api/admin/meetings")
 @get
-@useAuth(SessionCookie)
-op listPlannedMeetings(): OkPlannedMeetingList | Unauthorized | Forbidden;
+op listPlannedMeetings(): OkPlannedMeetingList | Forbidden;

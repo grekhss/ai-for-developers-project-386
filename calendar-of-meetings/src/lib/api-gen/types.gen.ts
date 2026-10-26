@@ -26,25 +26,18 @@ export type ErrorResponse = {
 };
 
 /**
- * Данные входа: пароль обязателен, имя гостя — опционально.
- */
-export type LoginInput = {
-    /**
-     * Пароль — непустая строка, минимум один непробельный символ: `'   '` не
-     * проходит, хотя с одним лишь `@minLength(1)` прошло бы.
-     */
-    password: string;
-    /**
-     * Имя гостя: для гостя обязательно (непустая строка), для админа игнорируется.
-     */
-    bookerName?: string;
-};
-
-/**
- * Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
- * Mantine: 'YYYY-MM-DD' и 'HH:mm'. Строки, а не Date, ещё и потому, что
- * new Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных
- * часовых поясах показывает предыдущий день.
+ * Записи на встречи.
+ *
+ * Роль определяется по cookie `role`: `/admin` → `admin`, остальное → `guest`
+ * (клиент ставит её по URL; сервер не проверяет пароли и не выдает сессий).
+ * Админские ручки требуют роль `admin` (иначе 403).
+ *
+ * Доменные правила букинга — окно 14 дней, прошедшие даты, выходные, сетка
+ * времени — сервер проверяет (ADR-0009, server/booking-rules.ts). Формат
+ * проверяется по сгенерированным схемам через `ajv` (K4); целостность —
+ * несуществующий или деактивированный тип, корректное имя записавшегося из тела
+ * (S5/C1). Русские тексты ошибок — в `server/routes.ts`.Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
+ * Mantine: 'YYYY-MM-DD' и 'HH:mm'.
  */
 export type Meeting = {
     /**
@@ -62,7 +55,8 @@ export type Meeting = {
 };
 
 /**
- * Данные новой записи — всё, кроме идентификатора; booker сюда не входит.
+ * Данные новой записи — всё, кроме идентификатора.
+ * Имя записавшегося `booker_name` передаётся из формы (не из сессии).
  */
 export type MeetingDraft = {
     /**
@@ -74,11 +68,13 @@ export type MeetingDraft = {
      */
     time: string;
     /**
+     * Имя записавшегося: непустая строка без пробельных только из пробелов,
+     * не длиннее 100 символов.
+     */
+    booker_name: string;
+    /**
      * Тип встречи. Если поле передано — тип обязан существовать и быть активным,
-     * иначе 400 (S5, C1); без поля запись создаётся «нетипизированной», как
-     * легаси-строки C5 (гостевой флоу F7 всегда передаёт тип). Формат — строка:
-     * не-строка отклоняется схемой как 400, а несуществующая строка — проверкой
-     * целостности в роуте.
+     * иначе 400; без поля запись создаётся «нетипизированной».
      */
     meeting_type_id?: string;
 };
@@ -102,11 +98,8 @@ export type MeetingType = {
     description: string;
     /**
      * Длительность встречи этого типа в минутах: 30–180, кратно 30. Кратность
-     * тридцати проверяет роут: декоратора для неё в TypeSpec нет (в JSON Schema
-     * есть multipleOf, но эмиттер его не породит) — границы дают minValue и
-     * maxValue. Информационное поле: сетку слотов и занятость оно не меняет
-     * (слот общий, ADR-0008; влияние длительности на занятость — путь роста,
-     * не v1).
+     * тридцати проверяет роут; информационное поле: сетку слотов и занятость
+     * оно не меняет (ADR-0008).
      */
     duration_minutes: number;
     /**
@@ -120,9 +113,7 @@ export type MeetingType = {
  */
 export type MeetingTypeDraft = {
     /**
-     * Название типа — непустая строка, минимум один непробельный символ: `'   '`
-     * не проходит, хотя с одним лишь `@minLength(1)` прошло бы (тот же приём,
-     * что у `LoginInput.password`, K4).
+     * Название типа — непустая строка, минимум один непробельный символ.
      */
     name: string;
     /**
@@ -130,10 +121,13 @@ export type MeetingTypeDraft = {
      */
     description: string;
     /**
-     * Длительность встреч этого типа в минутах: те же границы и кратность, что
-     * у MeetingType.duration_minutes (кратность — в роуте, как при чтении).
+     * Длительность встреч этого типа в минутах: 30–180, кратно 30.
      */
     duration_minutes: number;
+};
+
+export type NoContent = {
+    [key: string]: unknown;
 };
 
 /**
@@ -159,17 +153,6 @@ export type PlannedMeeting = {
     booker: string | null;
 };
 
-/**
- * Сессия — то, что подписано в httpOnly-cookie `session` и определяет доступ.
- */
-export type Session = {
-    role: 'admin' | 'guest';
-    /**
-     * Имя записывающегося; у админа его нет.
-     */
-    bookerName: string | null;
-};
-
 export type ListPlannedMeetingsData = {
     body?: never;
     path?: never;
@@ -179,11 +162,7 @@ export type ListPlannedMeetingsData = {
 
 export type ListPlannedMeetingsErrors = {
     /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
-    /**
-     * Нет прав: сессия есть, но роль не admin (T2).
+     * Нет прав: роль не admin (ADR-0010).
      */
     403: ErrorResponse;
 };
@@ -199,100 +178,12 @@ export type ListPlannedMeetingsResponses = {
 
 export type ListPlannedMeetingsResponse = ListPlannedMeetingsResponses[keyof ListPlannedMeetingsResponses];
 
-export type LoginData = {
-    body: LoginInput;
-    path?: never;
-    query?: never;
-    url: '/api/login';
-};
-
-export type LoginErrors = {
-    /**
-     * The server could not understand the request due to invalid syntax.
-     */
-    400: ErrorResponse;
-    /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
-};
-
-export type LoginError = LoginErrors[keyof LoginErrors];
-
-export type LoginResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: Session;
-};
-
-export type LoginResponse = LoginResponses[keyof LoginResponses];
-
-export type LogoutData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/logout';
-};
-
-export type LogoutErrors = {
-    /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
-};
-
-export type LogoutError = LogoutErrors[keyof LogoutErrors];
-
-export type LogoutResponses = {
-    /**
-     * There is no content to send for this request, but the headers may be useful.
-     */
-    204: void;
-};
-
-export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
-
-export type GetCurrentSessionData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/me';
-};
-
-export type GetCurrentSessionErrors = {
-    /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
-};
-
-export type GetCurrentSessionError = GetCurrentSessionErrors[keyof GetCurrentSessionErrors];
-
-export type GetCurrentSessionResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: Session;
-};
-
-export type GetCurrentSessionResponse = GetCurrentSessionResponses[keyof GetCurrentSessionResponses];
-
 export type ListMeetingTypesData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/meeting-types';
 };
-
-export type ListMeetingTypesErrors = {
-    /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
-};
-
-export type ListMeetingTypesError = ListMeetingTypesErrors[keyof ListMeetingTypesErrors];
 
 export type ListMeetingTypesResponses = {
     /**
@@ -316,11 +207,7 @@ export type CreateMeetingTypeErrors = {
      */
     400: ErrorResponse;
     /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
-    /**
-     * Нет прав: сессия есть, но роль не admin (T2).
+     * Нет прав: роль не admin (ADR-0010).
      */
     403: ErrorResponse;
 };
@@ -351,11 +238,7 @@ export type DeactivateMeetingTypeErrors = {
      */
     400: ErrorResponse;
     /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
-    /**
-     * Нет прав: сессия есть, но роль не admin (T2).
+     * Нет прав: роль не admin (ADR-0010).
      */
     403: ErrorResponse;
 };
@@ -392,10 +275,6 @@ export type ListMeetingsErrors = {
      * The server could not understand the request due to invalid syntax.
      */
     400: ErrorResponse;
-    /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
 };
 
 export type ListMeetingsError = ListMeetingsErrors[keyof ListMeetingsErrors];
@@ -421,10 +300,6 @@ export type CreateMeetingErrors = {
      * The server could not understand the request due to invalid syntax.
      */
     400: ErrorResponse;
-    /**
-     * Access is unauthorized.
-     */
-    401: ErrorResponse;
     /**
      * The request conflicts with the current state of the server.
      */

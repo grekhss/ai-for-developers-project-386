@@ -1,24 +1,6 @@
 openapi: 3.0.0
 info:
   title: Календарь встреч
-  description: |-
-    Единый декларативный контракт API «Календаря встреч» — единственный источник
-    истины (K1, ADR-0004). Из него генерируются contract/openapi.yaml, TS-типы
-    для фронта (src/lib/contract.gen.ts) и сервера (server/contract.gen.ts);
-    руками .gen.ts не правятся — только `npm run contract`.
-
-    Записи на встречи. Все /api, кроме входа, требуют сессионную cookie;
-    админские ручки дополнительно требуют роль admin (иначе 403).
-
-    Доменные правила букинга — окно 14 дней, прошедшие даты, выходные, сетка
-    времени — сервер проверяет (ADR-0009, server/booking-rules.ts). Сверх
-    форматной проверки (server/validate.ts, ajv) сервер ловит целостность:
-    несуществующий или деактивированный тип, пустой/длинный booker из сессии
-    (routes.ts, S5/C1).
-
-    Часть ручек описана ЗАРАНЕЕ и сервером ещё не реализована (S4): контракт
-    намеренно идёт впереди, чтобы клиентский SDK (K3) собрал их до реализации.
-    Тест сверяет с контрактом только фактически смонтированные роуты.
   version: 0.0.0
 tags: []
 paths:
@@ -27,7 +9,7 @@ paths:
       operationId: listPlannedMeetings
       description: |-
         Все запланированные встречи одним списком: сегодня и будущее, по возрастанию
-        (date, time), без 14-дневного горизонта. Только админ (C5). (S4)
+        (date, time), без 14-дневного горизонта. Только админ.
       parameters: []
       responses:
         '200':
@@ -38,92 +20,16 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/PlannedMeeting'
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: 'Нет прав: сессия есть, но роль не admin (T2).'
+          description: 'Нет прав: роль не admin (ADR-0010).'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-      security:
-        - ApiKeyAuth: []
-  /api/login:
-    post:
-      operationId: login
-      description: |-
-        Вход. Роль определяется только по паролю; для гостя обязателен непустой
-        bookerName (400), неверный пароль — 401. В ответ выставляется cookie `session`.
-      parameters: []
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Session'
-        '400':
-          description: The server could not understand the request due to invalid syntax.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginInput'
-  /api/logout:
-    post:
-      operationId: logout
-      description: 'Выход: сессионная cookie очищается, тела нет. Без сессии — 401.'
-      parameters: []
-      responses:
-        '204':
-          description: 'There is no content to send for this request, but the headers may be useful. '
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-      security:
-        - ApiKeyAuth: []
-  /api/me:
-    get:
-      operationId: getCurrentSession
-      description: 'Восстановление роли после перезагрузки: cookie httpOnly, клиент прочитать её не может.'
-      parameters: []
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Session'
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-      security:
-        - ApiKeyAuth: []
   /api/meeting-types:
     get:
       operationId: listMeetingTypes
-      description: Список типов встреч. Гость видит только активные, админ — все (Q2/Q7). (S3)
+      description: Список типов встреч. Гость видит только активные, админ — все (Q2/Q7).
       parameters: []
       responses:
         '200':
@@ -134,17 +40,9 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/MeetingType'
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-      security:
-        - ApiKeyAuth: []
     post:
       operationId: createMeetingType
-      description: Создание типа встречи. Только админ. (S3)
+      description: Создание типа встречи. Только админ.
       parameters: []
       responses:
         '201':
@@ -159,14 +57,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: 'Нет прав: сессия есть, но роль не admin (T2).'
+          description: 'Нет прав: роль не admin (ADR-0010).'
           content:
             application/json:
               schema:
@@ -177,12 +69,10 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/MeetingTypeDraft'
-      security:
-        - ApiKeyAuth: []
   /api/meeting-types/{id}/deactivate:
     post:
       operationId: deactivateMeetingType
-      description: Деактивация типа; удаления нет (Q7). Только админ. (S3)
+      description: Деактивация типа; удаления нет (Q7). Только админ.
       parameters:
         - name: id
           in: path
@@ -202,20 +92,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: 'Нет прав: сессия есть, но роль не admin (T2).'
+          description: 'Нет прав: роль не admin (ADR-0010).'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-      security:
-        - ApiKeyAuth: []
   /api/meetings:
     get:
       operationId: listMeetings
@@ -250,25 +132,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-      security:
-        - ApiKeyAuth: []
     post:
       operationId: createMeeting
       description: |-
         Создание записи. Формат — 400; занятый слот — 409 (UNIQUE(date, time) в базе).
-        Выбор несуществующего/деактивированного типа — тоже 400 (S5, C1).
-        Доменные правила букинга проверяет сервер (ADR-0009): прошедшая дата,
-        выходной, день вне окна 14 дней, время вне сетки 09:00–18:00 с шагом 30
-        и уже начавшийся сегодняшний слот — каждый отдельным 400. `booker` берётся
-        из подписанной сессионной cookie, никогда из тела (Q4): поле `booker` в теле
-        игнорируется (C10), а его отсутствие в сессии (админ) или длина больше 100
-        символов — 400. Возвращает запись с присвоенным id.
+        Выбор несуществующего/деактивированного типа — тоже 400. Домен — 400
+        (прошедшее/выходное/вне окна/сетка/уже начавшийся слот) по ADR-0009.
+        `booker_name` берётся из тела и обязателен; роль определяется по cookie `role`.
+        Возвращает запись с присвоенным id.
       parameters: []
       responses:
         '201':
@@ -279,12 +150,6 @@ paths:
                 $ref: '#/components/schemas/Meeting'
         '400':
           description: The server could not understand the request due to invalid syntax.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Access is unauthorized.
           content:
             application/json:
               schema:
@@ -301,8 +166,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/MeetingDraft'
-      security:
-        - ApiKeyAuth: []
 components:
   schemas:
     DateRange:
@@ -328,22 +191,6 @@ components:
         error:
           type: string
       description: 'Форма всех ошибок API: русское описание уходит клиенту как есть.'
-    LoginInput:
-      type: object
-      required:
-        - password
-      properties:
-        password:
-          type: string
-          minLength: 1
-          pattern: \S
-          description: |-
-            Пароль — непустая строка, минимум один непробельный символ: `'   '` не
-            проходит, хотя с одним лишь `@minLength(1)` прошло бы.
-        bookerName:
-          type: string
-          description: 'Имя гостя: для гостя обязательно (непустая строка), для админа игнорируется.'
-      description: 'Данные входа: пароль обязателен, имя гостя — опционально.'
     Meeting:
       type: object
       required:
@@ -363,15 +210,24 @@ components:
           pattern: ^([01]\d|2[0-3]):[0-5]\d$
           description: Начало встречи, 'HH:mm'.
       description: |-
-        Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
-        Mantine: 'YYYY-MM-DD' и 'HH:mm'. Строки, а не Date, ещё и потому, что
-        new Date('YYYY-MM-DD') разбирается как полночь UTC и в отрицательных
-        часовых поясах показывает предыдущий день.
+        Записи на встречи.
+
+        Роль определяется по cookie `role`: `/admin` → `admin`, остальное → `guest`
+        (клиент ставит её по URL; сервер не проверяет пароли и не выдает сессий).
+        Админские ручки требуют роль `admin` (иначе 403).
+
+        Доменные правила букинга — окно 14 дней, прошедшие даты, выходные, сетка
+        времени — сервер проверяет (ADR-0009, server/booking-rules.ts). Формат
+        проверяется по сгенерированным схемам через `ajv` (K4); целостность —
+        несуществующий или деактивированный тип, корректное имя записавшегося из тела
+        (S5/C1). Русские тексты ошибок — в `server/routes.ts`.Запись на встречу. Дата и время — строки в том формате, в котором их отдаёт
+        Mantine: 'YYYY-MM-DD' и 'HH:mm'.
     MeetingDraft:
       type: object
       required:
         - date
         - time
+        - booker_name
       properties:
         date:
           type: string
@@ -381,15 +237,22 @@ components:
           type: string
           pattern: ^([01]\d|2[0-3]):[0-5]\d$
           description: Начало встречи, 'HH:mm'.
+        booker_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: \S
+          description: |-
+            Имя записавшегося: непустая строка без пробельных только из пробелов,
+            не длиннее 100 символов.
         meeting_type_id:
           type: string
           description: |-
             Тип встречи. Если поле передано — тип обязан существовать и быть активным,
-            иначе 400 (S5, C1); без поля запись создаётся «нетипизированной», как
-            легаси-строки C5 (гостевой флоу F7 всегда передаёт тип). Формат — строка:
-            не-строка отклоняется схемой как 400, а несуществующая строка — проверкой
-            целостности в роуте.
-      description: Данные новой записи — всё, кроме идентификатора; booker сюда не входит.
+            иначе 400; без поля запись создаётся «нетипизированной».
+      description: |-
+        Данные новой записи — всё, кроме идентификатора.
+        Имя записавшегося `booker_name` передаётся из формы (не из сессии).
     MeetingType:
       type: object
       required:
@@ -416,11 +279,8 @@ components:
           maximum: 180
           description: |-
             Длительность встречи этого типа в минутах: 30–180, кратно 30. Кратность
-            тридцати проверяет роут: декоратора для неё в TypeSpec нет (в JSON Schema
-            есть multipleOf, но эмиттер его не породит) — границы дают minValue и
-            maxValue. Информационное поле: сетку слотов и занятость оно не меняет
-            (слот общий, ADR-0008; влияние длительности на занятость — путь роста,
-            не v1).
+            тридцати проверяет роут; информационное поле: сетку слотов и занятость
+            оно не меняет (ADR-0008).
         active:
           type: boolean
           description: 'Активен ли тип: деактивированный нельзя выбрать при новой записи (Q7).'
@@ -438,10 +298,7 @@ components:
           type: string
           minLength: 1
           pattern: \S
-          description: |-
-            Название типа — непустая строка, минимум один непробельный символ: `'   '`
-            не проходит, хотя с одним лишь `@minLength(1)` прошло бы (тот же приём,
-            что у `LoginInput.password`, K4).
+          description: Название типа — непустая строка, минимум один непробельный символ.
         description:
           type: string
           description: Описание типа.
@@ -450,10 +307,10 @@ components:
           format: int32
           minimum: 30
           maximum: 180
-          description: |-
-            Длительность встреч этого типа в минутах: те же границы и кратность, что
-            у MeetingType.duration_minutes (кратность — в роуте, как при чтении).
+          description: 'Длительность встреч этого типа в минутах: 30–180, кратно 30.'
       description: Данные нового типа встречи — всё, кроме идентификатора и признака активности.
+    NoContent:
+      type: object
     PlannedMeeting:
       type: object
       required:
@@ -481,24 +338,3 @@ components:
       description: |-
         Строка админского списка запланированных встреч: LEFT JOIN, поэтому у старых
         «нетипизированных» записей `type` и `booker` равны null (C5).
-    Session:
-      type: object
-      required:
-        - role
-        - bookerName
-      properties:
-        role:
-          type: string
-          enum:
-            - admin
-            - guest
-        bookerName:
-          type: string
-          nullable: true
-          description: Имя записывающегося; у админа его нет.
-      description: Сессия — то, что подписано в httpOnly-cookie `session` и определяет доступ.
-  securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: cookie
-      name: session

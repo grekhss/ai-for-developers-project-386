@@ -47,7 +47,7 @@ describe('useMeetings', () => {
     const { result } = renderHook(() => useMeetings(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    const created = await result.current.createMeeting({ date: futureDate, time: '11:00' });
+    const created = await result.current.createMeeting({ date: futureDate, time: '11:00', booker_name: 'Тест' } as any);
 
     await waitFor(() => expect(result.current.meetings).toHaveLength(1));
 
@@ -61,7 +61,7 @@ describe('useMeetings', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     await expect(
-      result.current.createMeeting({ date: futureDate, time: '11:00' })
+      result.current.createMeeting({ date: futureDate, time: '11:00', booker_name: 'Тест' } as any)
     ).resolves.toBeNull();
 
     expect(result.current.error).not.toBeNull();
@@ -75,7 +75,7 @@ describe('useMeetings', () => {
     const { result } = renderHook(() => useMeetings(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    const draft: MeetingDraft = { date: futureDate, time: '11:00', meeting_type_id: '7' };
+    const draft: MeetingDraft = { date: futureDate, time: '11:00', meeting_type_id: '7', booker_name: 'Тест' } as any;
     const created = await result.current.createMeeting(draft);
 
     // Хук — прозрачная труба: тип доходит до адаптера тем, чем его собрали.
@@ -103,7 +103,7 @@ describe('useMeetings', () => {
     const requestCountBeforeCreate = list.mock.calls.length;
 
     await expect(
-      result.current.createMeeting({ date: futureDate, time: '10:00' })
+      result.current.createMeeting({ date: futureDate, time: '10:00', booker_name: 'Тест' } as any)
     ).resolves.toBeNull();
 
     // После конфликта список перечитан ещё раз...
